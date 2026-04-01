@@ -12,6 +12,7 @@ namespace PowerCode.PsMcp.Tests;
 /// invocation is exercised, matching the production code path.
 /// </summary>
 [TestClass]
+[TestCategory("Unit")]
 public sealed class PowerShellToolTests : IDisposable
 {
     private readonly Runspace _runspace;

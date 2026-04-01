@@ -11,6 +11,7 @@ namespace PowerCode.PsMcp.Tests;
 /// always available in the .NET SDK build environment.
 /// </summary>
 [TestClass]
+[TestCategory("Unit")]
 public sealed class PowerShellToolFactoryTests : IDisposable
 {
     private readonly Runspace _runspace;

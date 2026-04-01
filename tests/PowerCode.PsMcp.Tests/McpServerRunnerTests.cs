@@ -10,6 +10,7 @@ namespace PowerCode.PsMcp.Tests;
 /// immediate shutdown.
 /// </summary>
 [TestClass]
+[TestCategory("Unit")]
 public sealed class McpServerRunnerTests
 {
     /// <summary>
