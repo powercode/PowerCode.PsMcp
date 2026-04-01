@@ -1,14 +1,36 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Text;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
 namespace PowerCode.PsMcp;
 
 /// <summary>
+/// Captures structured help information extracted from a single <c>Get-Help</c> call.
+/// </summary>
+/// <param name="Synopsis">The synopsis text, or the command name when no synopsis is available.</param>
+/// <param name="ParameterDescriptions">
+///   Maps parameter names (case-insensitive) to their <c>.PARAMETER</c> help descriptions.
+/// </param>
+/// <param name="Examples">Formatted example strings extracted from <c>.EXAMPLE</c> blocks.</param>
+internal sealed record HelpInfo(
+    string Synopsis,
+    IReadOnlyDictionary<string, string> ParameterDescriptions,
+    IReadOnlyList<string> Examples)
+{
+    /// <summary>Returns a <see cref="HelpInfo"/> with just the command name and no descriptions or examples.</summary>
+    public static HelpInfo Empty(string commandName) =>
+        new(commandName,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            Array.Empty<string>());
+}
+
+/// <summary>
 /// Builds <see cref="PowerShellTool"/> instances from PowerShell command metadata.
 /// Uses <c>Get-Command</c> to resolve a <see cref="CommandInfo"/>, <c>Get-Help</c>
-/// for synopsis text, and <see cref="ParameterMetadata"/> for the JSON input schema.
+/// for synopsis, parameter descriptions and examples, and <see cref="ParameterMetadata"/>
+/// for the JSON input schema.
 /// </summary>
 internal sealed class PowerShellToolFactory : IDisposable
 {
@@ -60,8 +82,9 @@ internal sealed class PowerShellToolFactory : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
 
         var commandInfo = GetCommandInfo(commandName);
-        var description = GetHelpDescription(commandName);
-        var inputSchema = BuildInputSchema(commandInfo);
+        var helpInfo = GetHelpInfo(commandName);
+        var description = BuildDescription(helpInfo);
+        var inputSchema = BuildInputSchema(commandInfo, helpInfo.ParameterDescriptions);
 
         var protocolTool = new Tool
         {
@@ -88,7 +111,41 @@ internal sealed class PowerShellToolFactory : IDisposable
                 nameof(commandName));
     }
 
-    private string GetHelpDescription(string commandName)
+    /// <summary>
+    /// Builds the tool description from the synopsis and any examples.
+    /// Format: synopsis, then optionally a blank line followed by "Examples:" and indented examples.
+    /// </summary>
+    private static string BuildDescription(HelpInfo helpInfo)
+    {
+        if (helpInfo.Examples.Count == 0)
+        {
+            return helpInfo.Synopsis;
+        }
+
+        var sb = new StringBuilder(helpInfo.Synopsis);
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine("Examples:");
+
+        foreach (var example in helpInfo.Examples)
+        {
+            // Each line of the example is indented by two spaces for readability.
+            foreach (var line in example.Split('\n'))
+            {
+                sb.Append("  ");
+                sb.AppendLine(line.TrimEnd());
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Retrieves structured help for <paramref name="commandName"/> via <c>Get-Help</c>,
+    /// extracting the synopsis, per-parameter descriptions, and examples.
+    /// Returns <see cref="HelpInfo.Empty"/> on any failure.
+    /// </summary>
+    private HelpInfo GetHelpInfo(string commandName)
     {
         try
         {
@@ -101,36 +158,133 @@ internal sealed class PowerShellToolFactory : IDisposable
 
             if (helpObject is null)
             {
-                return commandName;
+                return HelpInfo.Empty(commandName);
             }
 
             // Prefer Synopsis (short description) from help.
-            var synopsis = helpObject.Properties["Synopsis"]?.Value?.ToString();
-            if (!string.IsNullOrWhiteSpace(synopsis) && synopsis != commandName)
+            var synopsis = helpObject.Properties["Synopsis"]?.Value?.ToString()?.Trim();
+            if (string.IsNullOrWhiteSpace(synopsis) || synopsis == commandName)
             {
-                return synopsis.Trim();
-            }
-
-            // Fall back to the details.description block.
-            var details = helpObject.Properties["details"]?.Value as PSObject;
-            if (details is not null)
-            {
-                var desc = details.Properties["description"]?.Value?.ToString();
-                if (!string.IsNullOrWhiteSpace(desc))
+                // Fall back to the details.description block.
+                var details = helpObject.Properties["details"]?.Value as PSObject;
+                var detailsDesc = details?.Properties["description"]?.Value?.ToString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(detailsDesc))
                 {
-                    return desc.Trim();
+                    synopsis = detailsDesc;
                 }
             }
+
+            if (string.IsNullOrWhiteSpace(synopsis))
+            {
+                synopsis = commandName;
+            }
+
+            // Extract per-parameter descriptions from .PARAMETER help blocks.
+            var paramDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var parametersNode = helpObject.Properties["parameters"]?.Value as PSObject;
+
+            if (parametersNode is not null)
+            {
+                foreach (var paramPso in NormaliseToArray(parametersNode.Properties["parameter"]?.Value))
+                {
+                    var paramName = paramPso.Properties["name"]?.Value?.ToString();
+
+                    if (string.IsNullOrWhiteSpace(paramName))
+                    {
+                        continue;
+                    }
+
+                    var descText = ExtractTextArray(paramPso.Properties["description"]?.Value);
+
+                    if (!string.IsNullOrWhiteSpace(descText))
+                    {
+                        paramDescriptions[paramName] = descText;
+                    }
+                }
+            }
+
+            // Extract examples from .EXAMPLE help blocks.
+            var examples = new List<string>();
+            var examplesNode = helpObject.Properties["examples"]?.Value as PSObject;
+
+            if (examplesNode is not null)
+            {
+                foreach (var examplePso in NormaliseToArray(examplesNode.Properties["example"]?.Value))
+                {
+                    var code = examplePso.Properties["code"]?.Value?.ToString()?.Trim();
+
+                    if (!string.IsNullOrWhiteSpace(code))
+                    {
+                        examples.Add(code);
+                    }
+                }
+            }
+
+            return new HelpInfo(synopsis, paramDescriptions, examples);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"DEBUG: Could not retrieve help for '{commandName}': {ex.Message}");
+            return HelpInfo.Empty(commandName);
         }
-
-        return commandName;
     }
 
-    private static JsonElement BuildInputSchema(CommandInfo commandInfo)
+    /// <summary>
+    /// Normalises a raw PSObject-or-array value into a list of <see cref="PSObject"/> instances.
+    /// PowerShell returns a single <see cref="PSObject"/> when there is one element, and an array otherwise.
+    /// </summary>
+    private static List<PSObject> NormaliseToArray(object? raw)
+    {
+        var result = new List<PSObject>();
+
+        switch (raw)
+        {
+            case null:
+                break;
+            case PSObject[] psoArray:
+                result.AddRange(psoArray);
+                break;
+            case object[] objArray:
+                foreach (var item in objArray)
+                {
+                    if (item is PSObject pso)
+                    {
+                        result.Add(pso);
+                    }
+                }
+                break;
+            case PSObject single:
+                result.Add(single);
+                break;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Joins the <c>.Text</c> values from a PSObject(-array) as returned by <c>Get-Help</c>
+    /// description fields into a single trimmed string.
+    /// </summary>
+    private static string? ExtractTextArray(object? raw)
+    {
+        var items = NormaliseToArray(raw);
+
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        var joined = string.Join(" ",
+            items
+                .Select(item => item.Properties["Text"]?.Value?.ToString()?.Trim())
+                .Where(t => !string.IsNullOrWhiteSpace(t)));
+
+        return string.IsNullOrWhiteSpace(joined) ? null : joined;
+    }
+
+    private static JsonElement BuildInputSchema(
+        CommandInfo commandInfo,
+        IReadOnlyDictionary<string, string> parameterDescriptions)
     {
         var properties = new Dictionary<string, object?>();
         var required = new List<string>();
@@ -149,7 +303,8 @@ internal sealed class PowerShellToolFactory : IDisposable
                 continue;
             }
 
-            var property = BuildPropertySchema(paramMeta);
+            parameterDescriptions.TryGetValue(paramName, out var helpDescription);
+            var property = BuildPropertySchema(paramMeta, helpDescription);
             properties[paramName] = property;
 
             // A parameter is required if it is Mandatory in any parameter set.
@@ -175,7 +330,9 @@ internal sealed class PowerShellToolFactory : IDisposable
         return doc.RootElement.Clone();
     }
 
-    private static Dictionary<string, object?> BuildPropertySchema(ParameterMetadata paramMeta)
+    private static Dictionary<string, object?> BuildPropertySchema(
+        ParameterMetadata paramMeta,
+        string? helpDescription)
     {
         var property = new Dictionary<string, object?>();
 
@@ -207,15 +364,20 @@ internal sealed class PowerShellToolFactory : IDisposable
             property["enum"] = validateSet.ValidValues.Cast<object>().ToArray();
         }
 
-        // Use HelpMessage as the property description when available.
-        var helpMessage = paramMeta.Attributes
-            .OfType<ParameterAttribute>()
-            .Select(p => p.HelpMessage)
-            .FirstOrDefault(m => !string.IsNullOrWhiteSpace(m));
+        // Prefer Get-Help .PARAMETER description; fall back to the [Parameter(HelpMessage=...)] attribute.
+        var description = helpDescription;
 
-        if (helpMessage is not null)
+        if (string.IsNullOrWhiteSpace(description))
         {
-            property["description"] = helpMessage;
+            description = paramMeta.Attributes
+                .OfType<ParameterAttribute>()
+                .Select(p => p.HelpMessage)
+                .FirstOrDefault(m => !string.IsNullOrWhiteSpace(m));
+        }
+
+        if (description is not null)
+        {
+            property["description"] = description;
         }
 
         return property;

@@ -1,3 +1,4 @@
+using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -110,5 +111,158 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     {
         Assert.ThrowsExactly<ArgumentException>(() =>
             _factory.Create("Invoke-ThisCommandDoesNotExist_99999"));
+    }
+
+    // ── Advanced function comment-based help ─────────────────────────────────
+    //
+    // The helper method below defines Get-CurrentWeather in the shared runspace
+    // so that the tests can exercise comment-based help extraction end-to-end.
+
+    private void DefineWeatherFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Get-CurrentWeather {
+    <#
+    .SYNOPSIS
+        Retrieves the current weather for a specified location.
+    .DESCRIPTION
+        The Get-CurrentWeather function queries weather data for a given location.
+    .PARAMETER location
+        The name of the location (city, country, etc.) to retrieve weather for.
+    .PARAMETER unit
+        The temperature unit to use. Valid values are 'celsius' and 'fahrenheit'.
+    .EXAMPLE
+        Get-CurrentWeather -location ""New York"" -unit ""celsius""
+        Retrieves the current weather for New York in Celsius.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$location,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('celsius', 'fahrenheit')]
+        [string]$unit
+    )
+}");
+        ps.Invoke();
+    }
+
+    [TestMethod]
+    public void Create_AdvancedFunctionWithCommentHelp_DescriptionContainsSynopsis()
+    {
+        DefineWeatherFunction();
+
+        var tool = _factory.Create("Get-CurrentWeather");
+
+        StringAssert.Contains(tool.ProtocolTool.Description, "Retrieves the current weather");
+    }
+
+    [TestMethod]
+    public void Create_AdvancedFunctionWithCommentHelp_DescriptionContainsExamples()
+    {
+        DefineWeatherFunction();
+
+        var tool = _factory.Create("Get-CurrentWeather");
+
+        StringAssert.Contains(tool.ProtocolTool.Description, "Examples:");
+        StringAssert.Contains(tool.ProtocolTool.Description, "Get-CurrentWeather -location");
+    }
+
+    [TestMethod]
+    public void Create_AdvancedFunctionWithCommentHelp_ParameterHasHelpDescription()
+    {
+        DefineWeatherFunction();
+
+        var tool = _factory.Create("Get-CurrentWeather");
+        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var locationDesc = properties.GetProperty("location").GetProperty("description").GetString();
+
+        StringAssert.Contains(locationDesc, "The name of the location");
+    }
+
+    [TestMethod]
+    public void Create_AdvancedFunctionWithCommentHelp_ValidateSetAppearsAsEnum()
+    {
+        DefineWeatherFunction();
+
+        var tool = _factory.Create("Get-CurrentWeather");
+        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var enumValues = properties.GetProperty("unit").GetProperty("enum")
+            .EnumerateArray()
+            .Select(e => e.GetString())
+            .ToList();
+
+        CollectionAssert.Contains(enumValues, "celsius");
+        CollectionAssert.Contains(enumValues, "fahrenheit");
+    }
+
+    [TestMethod]
+    public void Create_AdvancedFunctionWithCommentHelp_MandatoryParametersAreRequired()
+    {
+        DefineWeatherFunction();
+
+        var tool = _factory.Create("Get-CurrentWeather");
+        var required = tool.ProtocolTool.InputSchema.GetProperty("required")
+            .EnumerateArray()
+            .Select(e => e.GetString())
+            .ToList();
+
+        CollectionAssert.Contains(required, "location");
+        CollectionAssert.Contains(required, "unit");
+    }
+
+    // ── HelpMessage attribute fallback ───────────────────────────────────────
+
+    [TestMethod]
+    public void Create_FunctionWithHelpMessageAttribute_UsesHelpMessageAsDescription()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-HelpMessageFallback {
+    param(
+        [Parameter(Mandatory = $true, HelpMessage = 'The name to greet')]
+        [string]$Name
+    )
+}");
+        ps.Invoke();
+
+        var tool = _factory.Create("Test-HelpMessageFallback");
+        var nameDesc = tool.ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name")
+            .GetProperty("description")
+            .GetString();
+
+        Assert.AreEqual("The name to greet", nameDesc);
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithBothHelpSources_PrefersGetHelpDescription()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-HelpPriority {
+    <#
+    .PARAMETER Name
+        The full name of the person from comment-based help.
+    #>
+    param(
+        [Parameter(Mandatory = $true, HelpMessage = 'HelpMessage attribute value')]
+        [string]$Name
+    )
+}");
+        ps.Invoke();
+
+        var tool = _factory.Create("Test-HelpPriority");
+        var nameDesc = tool.ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name")
+            .GetProperty("description")
+            .GetString();
+
+        StringAssert.Contains(nameDesc, "full name of the person from comment-based help");
     }
 }
