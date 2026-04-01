@@ -32,13 +32,13 @@ jobs:
           global-json-file: global.json
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore -bl:artifacts/restore.binlog
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build --configuration Release --no-restore -bl:artifacts/build.binlog
 
       - name: Unit Tests
-        run: dotnet test --configuration Release --no-build --logger trx --results-directory ./test-results
+        run: dotnet test --configuration Release --no-build --report-trx --results-directory ./test-results -bl:artifacts/test.binlog
 
       - name: Publish Test Results
         uses: dorny/test-reporter@v1
@@ -55,6 +55,14 @@ jobs:
         with:
           name: test-results-${{ matrix.os }}
           path: ./test-results/
+          retention-days: 14
+
+      - name: Upload Binary Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binlogs-${{ matrix.os }}
+          path: artifacts/*.binlog
           retention-days: 14
 
       - name: Upload Module Artifact

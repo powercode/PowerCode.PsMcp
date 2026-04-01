@@ -1,0 +1,52 @@
+name: Publish to PSGallery
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: psgallery
+
+    steps:
+      - name: Checkout Scripts
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+          fetch-depth: 0
+          path: repo
+
+      - name: Download Module Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PowerCode.PsMcp-module
+          path: module/
+
+      - name: Determine Version from Git Tag
+        id: version
+        shell: pwsh
+        working-directory: repo
+        run: ./scripts/Get-ModuleVersionFromGit.ps1
+
+      - name: Patch Module Manifest
+        shell: pwsh
+        run: >-
+          ./repo/scripts/Update-PsMcpManifest.ps1
+          -ModulePath './module'
+          -ModuleVersion '${{ steps.version.outputs.module-version }}'
+          -Prerelease '${{ steps.version.outputs.prerelease }}'
+
+      - name: Publish to PSGallery
+        shell: pwsh
+        run: Publish-Module -Path './module' -NuGetApiKey '${{ secrets.PSGALLERY_API_KEY }}' -Verbose
