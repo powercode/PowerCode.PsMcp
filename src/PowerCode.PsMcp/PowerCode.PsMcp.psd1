@@ -6,7 +6,7 @@
     # The binary assembly that contains the cmdlet implementation.
     RootModule        = 'PowerCode.PsMcp.dll'
 
-    ModuleVersion     = '1.0.0'
+    ModuleVersion     = '0.1.0'
     GUID              = '3f7c1b9a-d4e8-4c5b-8f6a-2e0dc93a1b7e'
     Author            = 'PowerCode'
     CompanyName       = 'PowerCode'
