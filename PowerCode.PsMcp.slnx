@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/PowerCode.PsMcp/PowerCode.PsMcp.csproj" />
+  <Project Path="tests/PowerCode.PsMcp.Tests/PowerCode.PsMcp.Tests.csproj" />
+</Solution>

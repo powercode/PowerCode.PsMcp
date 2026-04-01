@@ -1,0 +1,18 @@
+<Project Sdk="MSTest.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Underscore-separated Method_Scenario_Expected naming is standard for tests. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      Microsoft.PowerShell.SDK brings the full PowerShell runtime for tests,
+      including SMA and all built-in modules, so Get-Process etc. resolve.
+    -->
+    <PackageReference Include="Microsoft.PowerShell.SDK" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PowerCode.PsMcp\PowerCode.PsMcp.csproj" />
+  </ItemGroup>
+</Project>

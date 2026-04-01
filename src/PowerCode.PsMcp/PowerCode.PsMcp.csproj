@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Copy all NuGet dependency assemblies to output so PowerShell can load them. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <!--
+      System.Management.Automation is a compile-time reference only.
+      PowerShell provides its own copy at runtime, so we exclude runtime assets
+      to avoid shipping duplicate assemblies in the module output folder.
+    -->
+    <PackageReference Include="System.Management.Automation" ExcludeAssets="runtime" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>PowerCode.PsMcp.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
