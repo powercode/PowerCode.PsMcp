@@ -14,6 +14,10 @@
     <PackageReference Include="System.Management.Automation" ExcludeAssets="runtime" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Copy the module manifest to the build output so PowerShell can load the module. -->
+    <None Include="PowerCode.PsMcp.psd1" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>PowerCode.PsMcp.Tests</_Parameter1>
     </AssemblyAttribute>
