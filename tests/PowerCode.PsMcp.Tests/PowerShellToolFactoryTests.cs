@@ -1,7 +1,5 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
-using System.Text.Json;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace PowerCode.PsMcp.Tests;
 
@@ -36,6 +34,22 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     public void Create_WithGetProcess_ReturnsToolWithMatchingName()
     {
         var tool = _factory.Create("Get-Process");
+
+        Assert.AreEqual("Get-Process", tool.ProtocolTool.Name);
+    }
+
+    [TestMethod]
+    public void Create_WithToolName_SetsProtocolToolNameToProvidedName()
+    {
+        var tool = _factory.Create("Get-Process", "list-procs");
+
+        Assert.AreEqual("list-procs", tool.ProtocolTool.Name);
+    }
+
+    [TestMethod]
+    public void Create_WithNullToolName_UsesCommandNameAsDefault()
+    {
+        var tool = _factory.Create("Get-Process", null);
 
         Assert.AreEqual("Get-Process", tool.ProtocolTool.Name);
     }
@@ -156,7 +170,8 @@ function Get-CurrentWeather {
 
         var tool = _factory.Create("Get-CurrentWeather");
 
-        StringAssert.Contains(tool.ProtocolTool.Description, "Retrieves the current weather");
+        Assert.IsNotNull(tool.ProtocolTool.Description);
+        Assert.Contains("Retrieves the current weather", tool.ProtocolTool.Description);
     }
 
     [TestMethod]
@@ -166,8 +181,9 @@ function Get-CurrentWeather {
 
         var tool = _factory.Create("Get-CurrentWeather");
 
-        StringAssert.Contains(tool.ProtocolTool.Description, "Syntax:");
-        StringAssert.Contains(tool.ProtocolTool.Description, "[-location]");
+        Assert.IsNotNull(tool.ProtocolTool.Description);
+        Assert.Contains("Syntax:", tool.ProtocolTool.Description);
+        Assert.Contains("[-location]", tool.ProtocolTool.Description);
         StringAssert.DoesNotMatch(tool.ProtocolTool.Description,
             new System.Text.RegularExpressions.Regex("Examples:"));
     }
@@ -181,7 +197,8 @@ function Get-CurrentWeather {
         var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
         var locationDesc = properties.GetProperty("location").GetProperty("description").GetString();
 
-        StringAssert.Contains(locationDesc, "The name of the location");
+        Assert.IsNotNull(locationDesc);
+        Assert.Contains("The name of the location", locationDesc);
     }
 
     [TestMethod]
@@ -221,12 +238,13 @@ function Get-CurrentWeather {
         var tool = _factory.Create("Get-Date");
         var description = tool.ProtocolTool.Description;
 
-        StringAssert.Contains(description, "Gets the current date and time");
-        StringAssert.Contains(description, "Syntax:");
-        StringAssert.Contains(description, "[-Format <string>]");
+        Assert.IsNotNull(description);
+        Assert.Contains("Gets the current date and time", description);
+        Assert.Contains("Syntax:", description);
+        Assert.Contains("[-Format <string>]", description);
         StringAssert.DoesNotMatch(description,
             new System.Text.RegularExpressions.Regex("Examples:"));
-        Assert.IsTrue(description.Length < 1000,
+        Assert.IsLessThan(1000, description.Length,
             $"Expected description length < 1000 but was {description.Length}");
     }
     // ── HelpMessage attribute fallback ───────────────────────────────────────
@@ -280,6 +298,7 @@ function Test-HelpPriority {
             .GetProperty("description")
             .GetString();
 
-        StringAssert.Contains(nameDesc, "full name of the person from comment-based help");
+        Assert.IsNotNull(nameDesc);
+        Assert.Contains("full name of the person from comment-based help", nameDesc);
     }
 }

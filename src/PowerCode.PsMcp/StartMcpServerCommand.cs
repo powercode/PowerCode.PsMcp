@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Management.Automation;
 using Microsoft.Extensions.Logging;
 
@@ -15,8 +16,9 @@ namespace PowerCode.PsMcp;
 /// </para>
 /// </summary>
 /// <example>
-///   <code>Start-McpServer -ToolName Get-Process, Get-Service</code>
-///   <code>Start-McpServer -ToolName Invoke-Grep -ScriptPath ./tools.ps1 -Depth 5</code>
+///   <code>Start-McpServer -Module MyModule</code>
+///   <code>Start-McpServer -ScriptBlock { function Get-Foo { 'bar' } } -Include Get-Foo, Get-Date</code>
+///   <code>Start-McpServer -Module MyModule -Include "Get-*" -Exclude "Get-Secret" -NameMap @{ "list-procs" = "Get-Process" }</code>
 /// </example>
 [Cmdlet(VerbsLifecycle.Start, "McpServer")]
 [OutputType(typeof(void))]
@@ -24,10 +26,33 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
 {
     // ── Parameters ───────────────────────────────────────────────────────────
 
-    /// <summary>Names of PowerShell commands to expose as MCP tools.</summary>
-    [Parameter(Mandatory = true, Position = 0, HelpMessage = "Names of PowerShell commands to expose as MCP tools")]
+    /// <summary>Module name(s) or path(s) to import into the runspace before command discovery.</summary>
+    [Parameter(Position = 0,
+        HelpMessage = "Module name(s) or path(s) to import before command discovery")]
     [ValidateNotNullOrEmpty]
-    public string[] ToolName { get; set; } = [];
+    public string[]? Module { get; set; }
+
+    /// <summary>
+    /// Wildcard patterns for commands to include. Matching commands are included even if they
+    /// existed before module import (i.e., baseline commands can be pulled in explicitly).
+    /// </summary>
+    [Parameter(HelpMessage = "Wildcard patterns for commands to include")]
+    public string[]? Include { get; set; }
+
+    /// <summary>Wildcard patterns for commands to exclude from the discovered set.</summary>
+    [Parameter(HelpMessage = "Wildcard patterns for commands to exclude")]
+    public string[]? Exclude { get; set; }
+
+    /// <summary>
+    /// Maps friendly MCP tool names (keys) to real PowerShell command names (values).
+    /// Example: <c>@{ "get-weather" = "Get-CurrentWeather" }</c>
+    /// </summary>
+    [Parameter(HelpMessage = "Maps friendly MCP tool names (keys) to real PowerShell command names (values), ex:@{now = 'Get-Date'}")]
+#pragma warning disable CA2227 // Setter required for PowerShell parameter binding
+    public Hashtable? NameMap { get; set; }
+#pragma warning restore CA2227
+
+    // ── Shared parameters ────────────────────────────────────────────────────
 
     /// <summary>
     /// Optional path to a .ps1 script that is dot-sourced into the runspace before the
@@ -69,8 +94,27 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
 
         try
         {
+            // Validate that at least one source is provided.
+            if (Module is null && ScriptBlock is null && ScriptPath is null)
+            {
+                var ex = new PSArgumentException(
+                    "At least one of -Module, -ScriptBlock, or -ScriptPath must be provided.",
+                    nameof(Module));
+                ThrowTerminatingError(new ErrorRecord(ex, "NoDiscoverySource", ErrorCategory.InvalidArgument, null));
+                return;
+            }
+
+            // Convert the Hashtable NameMap to a case-insensitive IDictionary<string, string>.
+            Dictionary<string, string>? nameMapDict = null;
+            if (NameMap is not null)
+            {
+                nameMapDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (DictionaryEntry entry in NameMap)
+                    nameMapDict[entry.Key.ToString()!] = entry.Value?.ToString() ?? string.Empty;
+            }
+
 #pragma warning disable CA2025 // GetResult() blocks synchronously; loggerFactory outlives the task
-            runner.RunAsync(ToolName, ScriptPath, ScriptBlock?.ToString(), Depth, loggerFactory, _cts.Token)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), Include, Exclude, nameMapDict, Depth, loggerFactory, _cts.Token)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025

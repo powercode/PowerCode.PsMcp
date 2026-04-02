@@ -1,6 +1,5 @@
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -111,7 +110,7 @@ public sealed class PowerShellToolTests : IDisposable
 
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);
 
-        Assert.AreEqual(true, result.IsError, "Write-Error should produce an error result.");
+        Assert.IsTrue(result.IsError, "Write-Error should produce an error result.");
     }
 
     [TestMethod]
@@ -128,7 +127,7 @@ public sealed class PowerShellToolTests : IDisposable
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);
 
         var text = ((TextContentBlock)result.Content[0]).Text;
-        StringAssert.Contains(text, "hello-from-test");
+        Assert.Contains("hello-from-test", text);
     }
 
     [TestMethod]
@@ -141,7 +140,7 @@ public sealed class PowerShellToolTests : IDisposable
 
         var result = await tool.InvokeAsync(ctx, cts.Token);
 
-        Assert.AreEqual(true, result.IsError, "A cancelled invocation should return IsError=true.");
+        Assert.IsTrue(result.IsError, "A cancelled invocation should return IsError=true.");
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────

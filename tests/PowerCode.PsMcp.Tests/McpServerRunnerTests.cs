@@ -1,4 +1,3 @@
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using ModelContextProtocol.Server;
 
 namespace PowerCode.PsMcp.Tests;
@@ -6,7 +5,7 @@ namespace PowerCode.PsMcp.Tests;
 /// <summary>
 /// Tests for <see cref="McpServerRunner"/>.
 /// These tests exercise the lifecycle of the MCP server without requiring a real
-/// transport connection by using pre-cancelled cancellation tokens to trigger
+/// transport connection by using pre-canceled cancellation tokens to trigger
 /// immediate shutdown.
 /// </summary>
 [TestClass]
@@ -43,8 +42,8 @@ public sealed class McpServerRunnerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="McpServerRunner.RunAsync"/> shuts down promptly
-    /// when the token is cancelled shortly after launch.
+    /// Verifies that <see cref="McpServerRunner.RunAsync(ModelContextProtocol.Server.McpServerPrimitiveCollection{ModelContextProtocol.Server.McpServerTool},Microsoft.Extensions.Logging.ILoggerFactory?,System.Threading.CancellationToken)"/> shuts down promptly
+    /// when the token is canceled shortly after launch.
     /// </summary>
     [TestMethod]
     public async Task RunAsync_WhenCancelledAfterStart_CompletesWithinTimeout()

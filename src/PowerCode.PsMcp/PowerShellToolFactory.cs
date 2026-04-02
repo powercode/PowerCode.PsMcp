@@ -70,10 +70,15 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// <summary>
     /// Creates a <see cref="PowerShellTool"/> for <paramref name="commandName"/>.
     /// </summary>
+    /// <param name="commandName">The PowerShell command to invoke when the tool is called.</param>
+    /// <param name="toolName">
+    ///   Optional MCP protocol tool name exposed to clients. When <see langword="null"/>,
+    ///   <paramref name="commandName"/> is used as the tool name (backward-compatible default).
+    /// </param>
     /// <exception cref="ArgumentException">
     ///   Thrown when <paramref name="commandName"/> cannot be resolved by <c>Get-Command</c>.
     /// </exception>
-    public PowerShellTool Create(string commandName)
+    public PowerShellTool Create(string commandName, string? toolName = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
 
@@ -85,7 +90,7 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         var protocolTool = new Tool
         {
-            Name = commandName,
+            Name = toolName ?? commandName,
             Description = description,
             InputSchema = inputSchema
         };
