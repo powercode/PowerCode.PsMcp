@@ -23,10 +23,24 @@
     VariablesToExport = @()
 
     Filelist          = @(
-        'PowerCode.PsMcp.dll',
         'PowerCode.PsMcp.psd1',
+        'PowerCode.PsMcp.dll',        
         'System.Net.ServerSentEvents.dll',
         'System.Text.Encodings.Web.dll'
+        'Microsoft.Extensions.AI.Abstractions.dll'
+        'Microsoft.Extensions.Configuration.Abstractions.dll'
+        'Microsoft.Extensions.Configuration.Binder.dll'
+        'Microsoft.Extensions.Configuration.dll'
+        'Microsoft.Extensions.DependencyInjection.Abstractions.dll'
+        'Microsoft.Extensions.DependencyInjection.dll'
+        'Microsoft.Extensions.Logging.Abstractions.dll'
+        'Microsoft.Extensions.Logging.Configuration.dll'
+        'Microsoft.Extensions.Logging.Console.dll'
+        'Microsoft.Extensions.Logging.dll'
+        'Microsoft.Extensions.Options.ConfigurationExtensions.dll'
+        'Microsoft.Extensions.Options.dll'
+        'Microsoft.Extensions.Primitives.dll'
+        'ModelContextProtocol.Core.dll'        
         'en-US\PowerCode.PsMcp.dll-Help.xml'
     )
 
