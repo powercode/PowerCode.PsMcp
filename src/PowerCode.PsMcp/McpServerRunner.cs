@@ -125,7 +125,9 @@ internal sealed class McpServerRunner
     {
         var baseline = GetDefaultCommandNames();
         using var runspace = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
-        var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, modules, include, exclude, commandConfig, jsonDepth);
+        using var factory = new PowerShellToolFactory(runspace, jsonDepth);
+
+        var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, factory, modules, include, exclude, commandConfig);
         await RunAsync(toolCollection, loggerFactory, cancellationToken);
     }
 
@@ -165,11 +167,11 @@ internal sealed class McpServerRunner
     private static McpServerPrimitiveCollection<McpServerTool> BuildDiscoveredToolCollection(
         HashSet<string> baseline,
         Runspace runspace,
+        PowerShellToolFactory factory,
         string[]? modules,
         string[]? include,
         string[]? exclude,
-        IDictionary<string, McpToolConfig>? commandConfig,
-        int jsonDepth)
+        IDictionary<string, McpToolConfig>? commandConfig)
     {
         var allCommands = GetAllCommandNames(runspace);
 
@@ -193,7 +195,6 @@ internal sealed class McpServerRunner
                 "No commands were discovered. Ensure at least one module, script, or ScriptBlock introduces new commands, " +
                 "or that Include patterns match commands from an explicitly imported -Module.");
 
-        using var factory = new PowerShellToolFactory(runspace, jsonDepth);
         var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
         foreach (var cmdName in discovered)
         {
