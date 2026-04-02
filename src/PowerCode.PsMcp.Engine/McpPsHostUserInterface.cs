@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Host;
 using System.Security;
+using ModelContextProtocol;
 
 namespace PowerCode.PsMcp;
 
@@ -14,6 +15,15 @@ namespace PowerCode.PsMcp;
 internal sealed class McpPsHostUserInterface : PSHostUserInterface
 {
     private readonly McpPsHostRawUserInterface _rawUi = new();
+
+    /// <summary>
+    /// Per-invocation progress reporter. When set, <see cref="WriteProgress"/> forwards
+    /// <see cref="ProgressRecord"/> updates and <see cref="WriteWarningLine"/>,
+    /// <see cref="WriteVerboseLine"/>, and <see cref="WriteDebugLine"/> send message-only
+    /// notifications (Progress = 0, Total = null) to the MCP client instead of writing to stderr.
+    /// Must only be mutated while the runspace lock is held.
+    /// </summary>
+    internal IProgress<ProgressNotificationValue>? Progress { get; set; }
 
     /// <inheritdoc />
     public override PSHostRawUserInterface RawUI => _rawUi;
@@ -45,27 +55,58 @@ internal sealed class McpPsHostUserInterface : PSHostUserInterface
     public override void WriteLine() => Console.Error.WriteLine();
 
     /// <inheritdoc />
-    public override void WriteErrorLine(string value) =>
-        Console.Error.WriteLine($"ERROR: {value}");
+    public override void WriteErrorLine(string value) => Console.Error.WriteLine($"ERROR: {value}");
 
     /// <inheritdoc />
-    public override void WriteWarningLine(string message) =>
+    public override void WriteWarningLine(string message)
+    {
         Console.Error.WriteLine($"WARNING: {message}");
+        Progress?.Report(new ProgressNotificationValue { Progress = 0f, Message = $"WARNING: {message}" });
+    }
 
     /// <inheritdoc />
-    public override void WriteVerboseLine(string message) =>
+    public override void WriteVerboseLine(string message)
+    {
         Console.Error.WriteLine($"VERBOSE: {message}");
+        Progress?.Report(new ProgressNotificationValue { Progress = 0f, Message = $"VERBOSE: {message}" });
+    }
 
     /// <inheritdoc />
-    public override void WriteDebugLine(string message) =>
+    public override void WriteDebugLine(string message)
+    {
         Console.Error.WriteLine($"DEBUG: {message}");
+        Progress?.Report(new ProgressNotificationValue { Progress = 0f, Message = $"DEBUG: {message}" });
+    }
 
     /// <inheritdoc />
     public override void WriteProgress(long sourceId, ProgressRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        Console.Error.WriteLine(
-            $"PROGRESS [{record.ActivityId}]: {record.Activity} – {record.StatusDescription}");
+
+        if (Progress is { } reporter)
+        {
+            // Completed/Stopped records signal the end of an activity; skip them to
+            // avoid confusing clients with a 100 % notification after the real ones.
+            if (record.RecordType is ProgressRecordType.Completed)
+                return;
+
+            var message = string.IsNullOrEmpty(record.CurrentOperation)
+                ? $"{record.Activity}: {record.StatusDescription}"
+                : $"{record.Activity}: {record.StatusDescription} — {record.CurrentOperation}";
+
+            reporter.Report(new ProgressNotificationValue
+            {
+                // PercentComplete is -1 when unknown; clamp to 0 in that case.
+                Progress = record.PercentComplete >= 0 ? record.PercentComplete : 0f,
+                Total = 100f,
+                Message = message
+            });
+        }
+        else
+        {
+            Console.Error.WriteLine(
+                $"PROGRESS [{record.ActivityId}]: {record.Activity} – {record.StatusDescription}");
+        }
     }
 
     /// <inheritdoc />
@@ -73,7 +114,8 @@ internal sealed class McpPsHostUserInterface : PSHostUserInterface
     {
         if (record is not null)
         {
-            Console.Error.WriteLine($"INFO: {record.MessageData}");
+            var text = record.MessageData?.ToString() ?? string.Empty;
+            Console.Error.WriteLine($"INFO: {text}");
         }
     }
 

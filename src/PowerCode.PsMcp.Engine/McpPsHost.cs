@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Management.Automation.Host;
+using ModelContextProtocol;
 
 namespace PowerCode.PsMcp;
 
@@ -25,6 +26,13 @@ internal sealed class McpPsHost : PSHost
 
     /// <inheritdoc />
     public override PSHostUserInterface UI => _ui;
+
+    /// <summary>
+    /// Sets or clears the per-invocation MCP progress reporter wired into the host UI.
+    /// Must only be called while the runspace lock is held.
+    /// </summary>
+    internal void SetProgressReporter(IProgress<ProgressNotificationValue>? progress) =>
+        _ui.Progress = progress;
 
     /// <inheritdoc />
     public override CultureInfo CurrentCulture => CultureInfo.InvariantCulture;

@@ -75,7 +75,8 @@ internal sealed class McpServerRunner
             },
             Capabilities = new ServerCapabilities
             {
-                Tools = new ToolsCapability()
+                Tools = new ToolsCapability(),
+                Logging = new LoggingCapability()
             },
             ToolCollection = toolCollection
         };
@@ -100,9 +101,10 @@ internal sealed class McpServerRunner
     {
         ArgumentNullException.ThrowIfNull(toolNames);
 
-        using var runspace = CreateConfiguredRunspace(modules: null, scriptPath, scriptBlockText, callerScriptRoot);
+        var (runspace, host) = CreateConfiguredRunspace(modules: null, scriptPath, scriptBlockText, callerScriptRoot);
+        using var _ = runspace;
 
-        using var factory = new PowerShellToolFactory(runspace, jsonDepth);
+        using var factory = new PowerShellToolFactory(runspace, host, jsonDepth);
         var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
         foreach (var name in toolNames)
             toolCollection.Add(factory.Create(name));
@@ -130,8 +132,9 @@ internal sealed class McpServerRunner
         CancellationToken cancellationToken)
     {
         var baseline = GetDefaultCommandNames();
-        using var runspace = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
-        using var factory = new PowerShellToolFactory(runspace, jsonDepth);
+        var (runspace, host) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
+        using var _ = runspace;
+        using var factory = new PowerShellToolFactory(runspace, host, jsonDepth);
 
         var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, factory, modules, include, exclude, commandConfig);
         await RunAsync(toolCollection, cancellationToken);
@@ -141,7 +144,7 @@ internal sealed class McpServerRunner
     /// Creates a new runspace, imports modules and dot-sources/invokes any script,
     /// and returns the ready-to-use runspace.
     /// </summary>
-    private static Runspace CreateConfiguredRunspace(string[]? modules, string? scriptPath, string? scriptBlockText, string? callerScriptRoot)
+    private static (Runspace Runspace, McpPsHost Host) CreateConfiguredRunspace(string[]? modules, string? scriptPath, string? scriptBlockText, string? callerScriptRoot)
     {
         var host = new McpPsHost();
         var runspace = RunspaceFactory.CreateRunspace(host);
@@ -155,7 +158,7 @@ internal sealed class McpServerRunner
         else if (scriptBlockText is not null)
             InvokeScriptBlock(runspace, scriptBlockText, callerScriptRoot);
 
-        return runspace;
+        return (runspace, host);
     }
 
     /// <summary>

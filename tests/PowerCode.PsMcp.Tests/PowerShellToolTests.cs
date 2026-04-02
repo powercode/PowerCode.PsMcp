@@ -28,7 +28,7 @@ public sealed class PowerShellToolTests : IDisposable
     {
         _runspace = RunspaceFactory.CreateRunspace();
         _runspace.Open();
-        _factory = new PowerShellToolFactory(_runspace, jsonDepth: 2);
+        _factory = new PowerShellToolFactory(_runspace, new McpPsHost(), jsonDepth: 2);
     }
 
     [TestInitialize]

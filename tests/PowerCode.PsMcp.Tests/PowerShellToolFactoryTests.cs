@@ -20,7 +20,7 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     {
         _runspace = RunspaceFactory.CreateRunspace();
         _runspace.Open();
-        _factory = new PowerShellToolFactory(_runspace, jsonDepth: 2);
+        _factory = new PowerShellToolFactory(_runspace, new McpPsHost(), jsonDepth: 2);
     }
 
     public void Dispose()

@@ -33,6 +33,7 @@ internal sealed class PowerShellToolFactory : IDisposable
 {
     private readonly Runspace _runspace;
     private readonly int _jsonDepth;
+    private readonly McpPsHost _host;
 
     // A single semaphore serialises all runspace access across every tool produced
     // by this factory, since PowerShell runspaces are single-threaded.
@@ -57,15 +58,21 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// Initialises a new factory backed by <paramref name="runspace"/>.
     /// </summary>
     /// <param name="runspace">An already-opened runspace used for command discovery.</param>
-    /// <param name="jsonDepth">
-    ///   Depth passed to <c>ConvertTo-Json</c> when serialising tool output.
-    ///   Defaults to 2.
+    /// <param name="host">
+    ///     The <see cref="McpPsHost"/> associated with <paramref name="runspace"/>.
+    ///     When provided, tools will forward <see cref="System.Management.Automation.ProgressRecord"/>
+    ///     events to the MCP client as progress notifications.
     /// </param>
-    public PowerShellToolFactory(Runspace runspace, int jsonDepth = 2)
+    /// <param name="jsonDepth">
+    ///     Depth passed to <c>ConvertTo-Json</c> when serialising tool output.
+    ///     Defaults to 2.
+    /// </param>
+    public PowerShellToolFactory(Runspace runspace, McpPsHost host, int jsonDepth = 2)
     {
         ArgumentNullException.ThrowIfNull(runspace);
         _runspace = runspace;
         _jsonDepth = jsonDepth;
+        _host = host;
     }
 
     /// <summary>
@@ -106,6 +113,7 @@ internal sealed class PowerShellToolFactory : IDisposable
             _runspace,
             _runspaceLock,
             toolDepth,
+            _host,
             config?.Property,
             config?.ExcludeProperty);
     }
