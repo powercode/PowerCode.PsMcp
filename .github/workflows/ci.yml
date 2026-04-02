@@ -74,4 +74,5 @@ jobs:
         with:
           name: PowerCode.PsMcp-module
           path: artifacts/bin/PowerCode.PsMcp/release/
+          root-directory: artifacts/bin/PowerCode.PsMcp/release
           retention-days: 14
