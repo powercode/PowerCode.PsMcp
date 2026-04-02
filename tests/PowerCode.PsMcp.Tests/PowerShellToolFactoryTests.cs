@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Text.Json;
 
 namespace PowerCode.PsMcp.Tests;
 
@@ -300,5 +301,97 @@ function Test-HelpPriority {
 
         Assert.IsNotNull(nameDesc);
         Assert.Contains("full name of the person from comment-based help", nameDesc);
+    }
+
+    // ── Output schema ────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void Create_WithNoOutputType_OutputSchemaIsNull()
+    {
+        DefineWeatherFunction();
+
+        var tool = _factory.Create("Get-CurrentWeather");
+
+        Assert.IsNull(tool.ProtocolTool.OutputSchema);
+    }
+
+    [TestMethod]
+    public void Create_WithStringOutputType_OutputSchemaHasStringItemsArray()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-StringOutput {
+    [OutputType([string])]
+    param()
+    'hello'
+}");
+        ps.Invoke();
+
+        var tool = _factory.Create("Test-StringOutput");
+
+        Assert.IsNotNull(tool.ProtocolTool.OutputSchema);
+        var schema = tool.ProtocolTool.OutputSchema!.Value;
+        Assert.AreEqual("object", schema.GetProperty("type").GetString());
+        var items = schema.GetProperty("properties").GetProperty("items");
+        Assert.AreEqual("array", items.GetProperty("type").GetString());
+        Assert.AreEqual("string", items.GetProperty("items").GetProperty("type").GetString());
+    }
+
+    [TestMethod]
+    public void Create_WithIntOutputType_OutputSchemaHasIntegerItemsArray()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-IntOutput {
+    [OutputType([int])]
+    param()
+    42
+}");
+        ps.Invoke();
+
+        var tool = _factory.Create("Test-IntOutput");
+
+        Assert.IsNotNull(tool.ProtocolTool.OutputSchema);
+        var items = tool.ProtocolTool.OutputSchema!.Value
+            .GetProperty("properties").GetProperty("items");
+        Assert.AreEqual("integer", items.GetProperty("items").GetProperty("type").GetString());
+    }
+
+    [TestMethod]
+    public void Create_WithMultipleOutputTypes_OutputSchemaUsesLastDeclaredType()
+    {
+        // Get-Process declares three output types for different parameter sets:
+        // ProcessModule (-Module), FileVersionInfo (-FileVersionInfo), Process (default).
+        var tool = _factory.Create("Get-Process");
+
+        Assert.IsNotNull(tool.ProtocolTool.OutputSchema);
+        var items = tool.ProtocolTool.OutputSchema!.Value
+            .GetProperty("properties").GetProperty("items");
+        Assert.AreEqual("array", items.GetProperty("type").GetString());
+
+        // Last declared output type is used as the primary/default schema.
+        var processSchema = items.GetProperty("items");
+        Assert.AreEqual("object", processSchema.GetProperty("type").GetString());
+
+        var properties = processSchema.GetProperty("properties");
+        Assert.IsTrue(properties.TryGetProperty("ProcessName", out _), "Expected ProcessName in Process schema properties.");
+        Assert.IsTrue(properties.TryGetProperty("Id", out _), "Expected Id in Process schema properties.");
+    }
+
+    [TestMethod]
+    public void Create_WithDateTimeOutputType_OutputSchemaHasDateTimeInItems()
+    {
+        // Get-Date declares [OutputType([string])] and [OutputType([DateTime])].
+        var tool = _factory.Create("Get-Date");
+
+        Assert.IsNotNull(tool.ProtocolTool.OutputSchema);
+        var items = tool.ProtocolTool.OutputSchema!.Value
+            .GetProperty("properties").GetProperty("items");
+
+        var dateTimeSchema = items.GetProperty("items");
+        Assert.AreEqual("string", dateTimeSchema.GetProperty("type").GetString());
+        Assert.AreEqual("date-time", dateTimeSchema.GetProperty("format").GetString());
     }
 }

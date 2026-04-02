@@ -1,3 +1,4 @@
+using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
@@ -141,6 +142,55 @@ public sealed class PowerShellToolTests : IDisposable
         var result = await tool.InvokeAsync(ctx, cts.Token);
 
         Assert.IsTrue(result.IsError, "A cancelled invocation should return IsError=true.");
+    }
+
+    // ── Structured content envelope ───────────────────────────────────────────
+
+    [TestMethod]
+    public async Task InvokeAsync_WithStringOutput_StructuredContentHasItemsEnvelope()
+    {
+        var tool = _factory.Create("Write-Output");
+        var args = new Dictionary<string, JsonElement>
+        {
+            ["InputObject"] = JsonSerializer.SerializeToElement("envelope-test")
+        };
+        var ctx = BuildContext(tool, args);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsNotNull(result.StructuredContent);
+        var items = result.StructuredContent.Value.GetProperty("items");
+        Assert.AreEqual(JsonValueKind.Array, items.ValueKind);
+        Assert.AreEqual("envelope-test", items[0].GetString());
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithOutputSchema_EmptyPipeline_ReturnsEmptyItemsEnvelope()
+    {
+        DefineEmptyPipelineFunction();
+
+        var tool = _factory.Create("Test-EmptyPipeline");
+        var ctx = BuildContext(tool, arguments: null);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsNotNull(result.StructuredContent, "Expected structuredContent when outputSchema is set.");
+        var items = result.StructuredContent.Value.GetProperty("items");
+        Assert.AreEqual(JsonValueKind.Array, items.ValueKind);
+        Assert.AreEqual(0, items.GetArrayLength(), "Expected empty items array for empty pipeline.");
+    }
+
+    private void DefineEmptyPipelineFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-EmptyPipeline {
+    [OutputType([string])]
+    param()
+    # Intentionally writes nothing.
+}");
+        ps.Invoke();
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────

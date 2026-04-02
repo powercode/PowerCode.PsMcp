@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Reflection;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
@@ -86,19 +87,47 @@ internal sealed class PowerShellToolFactory : IDisposable
         var helpInfo = GetHelpInfo(commandName);
         var syntax = GetCommandSyntax(commandName);
         var description = BuildDescription(helpInfo, syntax);
-        var inputSchema = BuildInputSchema(commandInfo, helpInfo.ParameterDescriptions);
+        var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions);
+        var outputSchema = BuildOutputSchema(commandInfo);
 
         var protocolTool = new Tool
         {
             Name = toolName ?? commandName,
             Description = description,
-            InputSchema = inputSchema
+            InputSchema = inputSchema,
+            OutputSchema = outputSchema
         };
 
         return new PowerShellTool(commandName, protocolTool, _runspace, _runspaceLock, _jsonDepth);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the JSON input schema for a command, returning a minimal object schema
+    /// when parameter metadata cannot be fully resolved.
+    /// </summary>
+    private static JsonElement BuildSafeInputSchema(
+        CommandInfo commandInfo,
+        string commandName,
+        IReadOnlyDictionary<string, string> parameterDescriptions)
+    {
+        try
+        {
+            return BuildInputSchema(commandInfo, parameterDescriptions);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"DEBUG: Could not build input schema for '{commandName}': {ex.Message}");
+            var fallbackSchema = new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>()
+            };
+
+            return JsonSerializer.SerializeToElement(fallbackSchema);
+        }
+    }
 
     private CommandInfo GetCommandInfo(string commandName)
     {
@@ -378,6 +407,124 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         return property;
     }
+
+    /// <summary>
+    /// Builds an MCP <c>outputSchema</c> from the command's <see cref="CommandInfo.OutputType"/> attribute.
+    /// The schema describes an <c>{"items": [...]}</c> envelope matching PowerShell pipeline
+    /// semantics where commands write zero or more objects to the pipeline.
+    /// Returns <see langword="null"/> when no output types are declared.
+    /// </summary>
+    private static JsonElement? BuildOutputSchema(CommandInfo commandInfo)
+    {
+        if (commandInfo.OutputType.Count == 0)
+            return null;
+
+        // The last declared output type is the default/primary case in PowerShell
+        // convention. Earlier entries typically map to specific parameter sets.
+        var primaryType = commandInfo.OutputType[commandInfo.OutputType.Count - 1];
+        object itemSchema = BuildItemSchema(primaryType.Type);
+
+        var schema = new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["properties"] = new Dictionary<string, object?>
+            {
+                ["items"] = new Dictionary<string, object?>
+                {
+                    ["type"] = "array",
+                    ["items"] = itemSchema
+                }
+            }
+        };
+
+        return JsonSerializer.SerializeToElement(schema);
+    }
+
+    /// <summary>
+    /// Builds a JSON Schema fragment describing a single pipeline object of the given <paramref name="type"/>.
+    /// For basic types, returns the corresponding JSON Schema primitive.
+    /// For complex types, reflects public instance properties into an object schema.
+    /// </summary>
+    private static Dictionary<string, object?> BuildItemSchema(Type? type)
+    {
+        if (type is null || type == typeof(void))
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
+        type = Nullable.GetUnderlyingType(type) ?? type;
+
+        // Opaque types with no meaningful compile-time property info.
+        if (type == typeof(object) || type == typeof(PSObject))
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
+        // Basic/primitive types: use the existing JSON Schema mapping.
+        if (IsJsonPrimitiveType(type))
+        {
+            var (jsonType, jsonFormat) = MapToJsonSchemaType(type);
+            var s = new Dictionary<string, object?> { ["type"] = jsonType };
+            if (jsonFormat is not null) s["format"] = jsonFormat;
+            return s;
+        }
+
+        // Array types: describe element type.
+        if (type.IsArray)
+        {
+            var elemType = type.GetElementType() ?? typeof(object);
+            return new Dictionary<string, object?>
+            {
+                ["type"] = "array",
+                ["items"] = BuildItemSchema(elemType)
+            };
+        }
+
+        // Complex type: reflect public instance properties.
+        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        if (properties.Length == 0)
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
+        var propSchemas = new Dictionary<string, object?>();
+        foreach (var prop in properties)
+        {
+            var propType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+            if (propType.IsArray)
+            {
+                var elemType = propType.GetElementType() ?? typeof(string);
+                var (elt, _) = MapToJsonSchemaType(elemType);
+                propSchemas[prop.Name] = new Dictionary<string, object?>
+                {
+                    ["type"] = "array",
+                    ["items"] = new Dictionary<string, object?> { ["type"] = elt }
+                };
+            }
+            else
+            {
+                var (jt, jf) = MapToJsonSchemaType(propType);
+                var ps = new Dictionary<string, object?> { ["type"] = jt };
+                if (jf is not null) ps["format"] = jf;
+                propSchemas[prop.Name] = ps;
+            }
+        }
+
+        return new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["properties"] = propSchemas
+        };
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> for types that map to a JSON Schema primitive,
+    /// as opposed to complex types that should have their properties reflected.
+    /// </summary>
+    private static bool IsJsonPrimitiveType(Type type) =>
+        type == typeof(string)
+        || type == typeof(int) || type == typeof(long)
+        || type == typeof(short) || type == typeof(uint)
+        || type == typeof(ulong) || type == typeof(byte)
+        || type == typeof(double) || type == typeof(float)
+        || type == typeof(decimal)
+        || type == typeof(bool) || type == typeof(SwitchParameter)
+        || type == typeof(DateTime)
+        || type == typeof(System.Collections.Hashtable);
 
     /// <inheritdoc />
     public void Dispose() => _runspaceLock.Dispose();
