@@ -98,7 +98,7 @@ public sealed class PowerShellToolTests : IDisposable
         Assert.IsNotNull(result);
         Assert.IsNotEmpty(result.Content, "Expected non-empty content.");
         Assert.IsInstanceOfType<TextContentBlock>(result.Content[0]);
-        Assert.IsTrue(result.IsError is not true, "Get-Date should not return an error.");
+        Assert.AreNotEqual(true, result.IsError, "Get-Date should not return an error.");
     }
 
     [TestMethod]
@@ -197,7 +197,7 @@ public sealed class PowerShellToolTests : IDisposable
         var item = result.StructuredContent.Value.GetProperty("items")[0];
         var propertyNames = item.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
 
-        Assert.AreEqual(IncludedProperties.Length, propertyNames.Count);
+        Assert.HasCount(IncludedProperties.Length, propertyNames);
         foreach (var propertyName in IncludedProperties)
         {
             Assert.Contains(propertyName, propertyNames);

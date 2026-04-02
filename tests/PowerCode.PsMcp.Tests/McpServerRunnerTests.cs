@@ -1,3 +1,5 @@
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
 using ModelContextProtocol.Server;
 
 namespace PowerCode.PsMcp.Tests;
@@ -64,5 +66,25 @@ public sealed class McpServerRunnerTests
         {
             // Expected: server shuts down cleanly when the token fires.
         }
+    }
+
+    [TestMethod]
+    public void InvokeScriptBlock_WithCallerScriptRoot_SetsPsScriptRoot()
+    {
+        var callerScriptRoot = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar);
+        const string scriptText = "function Get-TestRoot { $PSScriptRoot }";
+
+        var host = new McpPsHost();
+        using var runspace = RunspaceFactory.CreateRunspace(host);
+        runspace.Open();
+
+        McpServerRunner.InvokeScriptBlock(runspace, scriptText, callerScriptRoot);
+
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+        var results = ps.AddScript("Get-TestRoot").Invoke();
+
+        Assert.HasCount(1, results);
+        Assert.AreEqual(callerScriptRoot, results[0].BaseObject as string, ignoreCase: true);
     }
 }

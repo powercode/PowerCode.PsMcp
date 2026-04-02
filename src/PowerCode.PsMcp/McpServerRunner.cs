@@ -1,4 +1,6 @@
+using System.IO;
 using System.Management.Automation;
+using System.Management.Automation.Language;
 using System.Management.Automation.Runspaces;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
@@ -84,20 +86,14 @@ internal sealed class McpServerRunner
         string[] toolNames,
         string? scriptPath,
         string? scriptBlockText,
+        string? callerScriptRoot,
         int jsonDepth,
         ILoggerFactory? loggerFactory,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(toolNames);
 
-        var host = new McpPsHost();
-        using var runspace = RunspaceFactory.CreateRunspace(host);
-        runspace.Open();
-
-        if (scriptPath is not null)
-            DotSourceScript(runspace, scriptPath);
-        else if (scriptBlockText is not null)
-            InvokeScriptBlock(runspace, scriptBlockText);
+        using var runspace = CreateConfiguredRunspace(modules: null, scriptPath, scriptBlockText, callerScriptRoot);
 
         using var factory = new PowerShellToolFactory(runspace, jsonDepth);
         var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
@@ -119,6 +115,7 @@ internal sealed class McpServerRunner
         string[]? modules,
         string? scriptPath,
         string? scriptBlockText,
+        string? callerScriptRoot,
         string[]? include,
         string[]? exclude,
         IDictionary<string, McpToolConfig>? commandConfig,
@@ -127,7 +124,7 @@ internal sealed class McpServerRunner
         CancellationToken cancellationToken)
     {
         var baseline = GetDefaultCommandNames();
-        using var runspace = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText);
+        using var runspace = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
         var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, modules, include, exclude, commandConfig, jsonDepth);
         await RunAsync(toolCollection, loggerFactory, cancellationToken);
     }
@@ -136,7 +133,7 @@ internal sealed class McpServerRunner
     /// Creates a new runspace, imports modules and dot-sources/invokes any script,
     /// and returns the ready-to-use runspace.
     /// </summary>
-    private static Runspace CreateConfiguredRunspace(string[]? modules, string? scriptPath, string? scriptBlockText)
+    private static Runspace CreateConfiguredRunspace(string[]? modules, string? scriptPath, string? scriptBlockText, string? callerScriptRoot)
     {
         var host = new McpPsHost();
         var runspace = RunspaceFactory.CreateRunspace(host);
@@ -148,7 +145,7 @@ internal sealed class McpServerRunner
         if (scriptPath is not null)
             DotSourceScript(runspace, scriptPath);
         else if (scriptBlockText is not null)
-            InvokeScriptBlock(runspace, scriptBlockText);
+            InvokeScriptBlock(runspace, scriptBlockText, callerScriptRoot);
 
         return runspace;
     }
@@ -224,11 +221,29 @@ internal sealed class McpServerRunner
         }
     }
 
-    internal static void InvokeScriptBlock(Runspace runspace, string scriptBlockText)
+    internal static void InvokeScriptBlock(Runspace runspace, string scriptBlockText, string? callerScriptRoot = null)
     {
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
-        ps.AddScript(scriptBlockText);
+
+        if (!string.IsNullOrEmpty(callerScriptRoot))
+        {
+            var virtualFile = Path.Combine(callerScriptRoot, "__psmcp_init__.ps1");
+            var ast = Parser.ParseInput(scriptBlockText, virtualFile, out _, out var parseErrors);
+            if (parseErrors.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to parse script block: {string.Join("; ", parseErrors.Select(error => error.Message))}");
+            }
+
+            var scriptBlock = ast.GetScriptBlock();
+            ps.AddScript(". $args[0]").AddArgument(scriptBlock);
+        }
+        else
+        {
+            ps.AddScript(scriptBlockText);
+        }
+
         ps.Invoke();
 
         if (ps.HadErrors)

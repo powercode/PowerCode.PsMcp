@@ -1,4 +1,5 @@
 using System.Collections;
+using System.IO;
 using System.Management.Automation;
 using Microsoft.Extensions.Logging;
 
@@ -129,8 +130,16 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
                 }
             }
 
+            string? callerScriptRoot = null;
+            if (ScriptBlock is not null)
+            {
+                callerScriptRoot = !string.IsNullOrEmpty(ScriptBlock.File)
+                    ? Path.GetDirectoryName(ScriptBlock.File)
+                    : MyInvocation.PSScriptRoot;
+            }
+
 #pragma warning disable CA2025 // GetResult() blocks synchronously; loggerFactory outlives the task
-            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), Include, Exclude, configDict, Depth, loggerFactory, _cts.Token)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, loggerFactory, _cts.Token)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025
