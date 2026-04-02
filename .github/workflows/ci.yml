@@ -38,7 +38,9 @@ jobs:
         run: dotnet restore -bl:artifacts/restore.binlog
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore -bl:artifacts/build.binlog
+        run: 
+          pwsh -noprofile -nologo -command "Install-PSResource -Name:Microsoft.PowerShell.PlatyPS -Repository:PSGallery -TrustRepository"
+          dotnet build --configuration Release --no-restore -bl:artifacts/build.binlog
 
       - name: Unit Tests
         run: dotnet test --configuration Release --no-build --filter TestCategory!=LocalHelpInstalled --report-trx --results-directory ./test-results -bl:artifacts/test.binlog
