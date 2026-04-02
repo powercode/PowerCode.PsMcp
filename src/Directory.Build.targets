@@ -26,7 +26,7 @@
 
     <Exec Command="pwsh -NoProfile -NonInteractive -Command &quot;Import-MarkdownCommandHelp -Path &apos;$(MSBuildThisFileDirectory)..\docs\powercode.psmcp\*.md&apos; | Export-MamlCommandHelp -Encoding utf8 -OutputFolder &apos;$(_MamlStagingDir)&apos;&quot;" />
 
-    <Move SourceFiles="$(_MamlStagingDir)powercode.psmcp\PowerCode.PsMcp.dll-Help.xml"
+    <Move SourceFiles="$(_MamlStagingDir)PowerCode.PsMcp\PowerCode.PsMcp.dll-Help.xml"
           DestinationFiles="$(OutputPath)en-US\PowerCode.PsMcp.dll-Help.xml" />
 
     <RemoveDir Directories="$(_MamlStagingDir)" />
