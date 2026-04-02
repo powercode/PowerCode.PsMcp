@@ -1,6 +1,5 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
-using System.Text;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
@@ -13,17 +12,14 @@ namespace PowerCode.PsMcp;
 /// <param name="ParameterDescriptions">
 ///   Maps parameter names (case-insensitive) to their <c>.PARAMETER</c> help descriptions.
 /// </param>
-/// <param name="Examples">Formatted example strings extracted from <c>.EXAMPLE</c> blocks.</param>
 internal sealed record HelpInfo(
     string Synopsis,
-    IReadOnlyDictionary<string, string> ParameterDescriptions,
-    IReadOnlyList<string> Examples)
+    IReadOnlyDictionary<string, string> ParameterDescriptions)
 {
-    /// <summary>Returns a <see cref="HelpInfo"/> with just the command name and no descriptions or examples.</summary>
+    /// <summary>Returns a <see cref="HelpInfo"/> with just the command name and no descriptions.</summary>
     public static HelpInfo Empty(string commandName) =>
         new(commandName,
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-            Array.Empty<string>());
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>
@@ -83,7 +79,8 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         var commandInfo = GetCommandInfo(commandName);
         var helpInfo = GetHelpInfo(commandName);
-        var description = BuildDescription(helpInfo);
+        var syntax = GetCommandSyntax(commandName);
+        var description = BuildDescription(helpInfo, syntax);
         var inputSchema = BuildInputSchema(commandInfo, helpInfo.ParameterDescriptions);
 
         var protocolTool = new Tool
@@ -112,32 +109,44 @@ internal sealed class PowerShellToolFactory : IDisposable
     }
 
     /// <summary>
-    /// Builds the tool description from the synopsis and any examples.
-    /// Format: synopsis, then optionally a blank line followed by "Examples:" and indented examples.
+    /// Returns the parameter-set syntax for <paramref name="commandName"/> by invoking
+    /// <c>Get-Command -Name &lt;name&gt; -Syntax</c>.
+    /// Using <c>-Syntax</c> is necessary because <c>CommandInfo.Definition</c> returns the
+    /// script-block body for functions rather than the parameter set syntax.
+    /// Returns an empty string on any failure.
     /// </summary>
-    private static string BuildDescription(HelpInfo helpInfo)
+    private string GetCommandSyntax(string commandName)
     {
-        if (helpInfo.Examples.Count == 0)
+        try
+        {
+            using var ps = PowerShell.Create();
+            ps.Runspace = _runspace;
+            ps.AddCommand("Get-Command")
+              .AddParameter("Name", commandName)
+              .AddParameter("Syntax");
+
+            var results = ps.Invoke<string>();
+            return results.FirstOrDefault()?.Trim() ?? string.Empty;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// Builds the tool description from the synopsis and the parameter-set syntax.
+    /// Format: <c>"{Synopsis}\n\nSyntax:\n{syntax}"</c> when syntax is available,
+    /// or just the synopsis when it is not.
+    /// </summary>
+    private static string BuildDescription(HelpInfo helpInfo, string syntax)
+    {
+        if (string.IsNullOrWhiteSpace(syntax))
         {
             return helpInfo.Synopsis;
         }
 
-        var sb = new StringBuilder(helpInfo.Synopsis);
-        sb.AppendLine();
-        sb.AppendLine();
-        sb.AppendLine("Examples:");
-
-        foreach (var example in helpInfo.Examples)
-        {
-            // Each line of the example is indented by two spaces for readability.
-            foreach (var line in example.Split('\n'))
-            {
-                sb.Append("  ");
-                sb.AppendLine(line.TrimEnd());
-            }
-        }
-
-        return sb.ToString().TrimEnd();
+        return $"{helpInfo.Synopsis}\n\nSyntax:\n{syntax}";
     }
 
     /// <summary>
@@ -181,9 +190,8 @@ internal sealed class PowerShellToolFactory : IDisposable
 
             // Extract per-parameter descriptions from .PARAMETER help blocks.
             var paramDescriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var parametersNode = helpObject.Properties["parameters"]?.Value as PSObject;
 
-            if (parametersNode is not null)
+            if (helpObject.Properties["parameters"]?.Value is PSObject parametersNode)
             {
                 foreach (var paramPso in NormaliseToArray(parametersNode.Properties["parameter"]?.Value))
                 {
@@ -203,24 +211,7 @@ internal sealed class PowerShellToolFactory : IDisposable
                 }
             }
 
-            // Extract examples from .EXAMPLE help blocks.
-            var examples = new List<string>();
-            var examplesNode = helpObject.Properties["examples"]?.Value as PSObject;
-
-            if (examplesNode is not null)
-            {
-                foreach (var examplePso in NormaliseToArray(examplesNode.Properties["example"]?.Value))
-                {
-                    var code = examplePso.Properties["code"]?.Value?.ToString()?.Trim();
-
-                    if (!string.IsNullOrWhiteSpace(code))
-                    {
-                        examples.Add(code);
-                    }
-                }
-            }
-
-            return new HelpInfo(synopsis, paramDescriptions, examples);
+            return new HelpInfo(synopsis, paramDescriptions);
         }
         catch (Exception ex)
         {

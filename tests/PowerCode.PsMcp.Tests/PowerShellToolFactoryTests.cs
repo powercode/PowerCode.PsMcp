@@ -160,14 +160,16 @@ function Get-CurrentWeather {
     }
 
     [TestMethod]
-    public void Create_AdvancedFunctionWithCommentHelp_DescriptionContainsExamples()
+    public void Create_AdvancedFunctionWithCommentHelp_DescriptionContainsSyntax()
     {
         DefineWeatherFunction();
 
         var tool = _factory.Create("Get-CurrentWeather");
 
-        StringAssert.Contains(tool.ProtocolTool.Description, "Examples:");
-        StringAssert.Contains(tool.ProtocolTool.Description, "Get-CurrentWeather -location");
+        StringAssert.Contains(tool.ProtocolTool.Description, "Syntax:");
+        StringAssert.Contains(tool.ProtocolTool.Description, "[-location]");
+        StringAssert.DoesNotMatch(tool.ProtocolTool.Description,
+            new System.Text.RegularExpressions.Regex("Examples:"));
     }
 
     [TestMethod]
@@ -212,7 +214,20 @@ function Get-CurrentWeather {
         CollectionAssert.Contains(required, "location");
         CollectionAssert.Contains(required, "unit");
     }
+    [TestMethod]
+    public void Create_WithGetDate_DescriptionContainsSynopsisAndSyntax()
+    {
+        var tool = _factory.Create("Get-Date");
+        var description = tool.ProtocolTool.Description;
 
+        StringAssert.Contains(description, "Gets the current date and time");
+        StringAssert.Contains(description, "Syntax:");
+        StringAssert.Contains(description, "[-Format <string>]");
+        StringAssert.DoesNotMatch(description,
+            new System.Text.RegularExpressions.Regex("Examples:"));
+        Assert.IsTrue(description.Length < 1000,
+            $"Expected description length < 1000 but was {description.Length}");
+    }
     // ── HelpMessage attribute fallback ───────────────────────────────────────
 
     [TestMethod]
