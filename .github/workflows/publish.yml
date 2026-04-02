@@ -51,4 +51,4 @@ jobs:
         shell: pwsh
         run: |
           Register-PSResourceRepository -PSGallery -Force
-          Publish-PSResource -Path ./PowerCode.PsMcp.psd1 -ApiKey ${{ secrets.PSGALLERY_API_KEY }} -Repository PSGallery -Verbose
+          Publish-PSResource -Path:./PowerCode.PsMcp.psd1 -ApiKey:${{ secrets.PSGALLERY_API_KEY }} -Repository:PSGallery -Verbose
