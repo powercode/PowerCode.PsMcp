@@ -15,6 +15,9 @@ namespace PowerCode.PsMcp.Tests;
 [TestCategory("Unit")]
 public sealed class PowerShellToolTests : IDisposable
 {
+    private static readonly string[] IncludedProperties = ["Id", "Name"];
+    private static readonly string[] ExcludedProperties = ["SafeHandle", "Handle"];
+
     private readonly Runspace _runspace;
     private readonly PowerShellToolFactory _factory;
     // A minimal server created from null streams is sufficient to satisfy
@@ -180,6 +183,67 @@ public sealed class PowerShellToolTests : IDisposable
         Assert.AreEqual(0, items.GetArrayLength(), "Expected empty items array for empty pipeline.");
     }
 
+    [TestMethod]
+    public async Task InvokeAsync_WithPropertySelection_ReturnsOnlySelectedProperties()
+    {
+        DefinePropertySelectionFunction();
+
+        var tool = _factory.Create("Get-TestRecord", new McpToolConfig { Property = IncludedProperties });
+        var ctx = BuildContext(tool, arguments: null);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsNotNull(result.StructuredContent);
+        var item = result.StructuredContent.Value.GetProperty("items")[0];
+        var propertyNames = item.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+
+        Assert.AreEqual(IncludedProperties.Length, propertyNames.Count);
+        foreach (var propertyName in IncludedProperties)
+        {
+            Assert.Contains(propertyName, propertyNames);
+        }
+
+        Assert.AreEqual("demo", item.GetProperty("Name").GetString());
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithExcludeProperty_OmitsExcludedProperties()
+    {
+        DefinePropertySelectionFunction();
+
+        var tool = _factory.Create("Get-TestRecord", new McpToolConfig { ExcludeProperty = ExcludedProperties });
+        var ctx = BuildContext(tool, arguments: null);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsNotNull(result.StructuredContent);
+        var item = result.StructuredContent.Value.GetProperty("items")[0];
+
+        Assert.IsTrue(item.TryGetProperty("Id", out _));
+        Assert.IsTrue(item.TryGetProperty("Name", out _));
+        Assert.IsFalse(item.TryGetProperty("SafeHandle", out _));
+        Assert.IsFalse(item.TryGetProperty("Handle", out _));
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithNoPropertySelection_ReturnsFullOutput()
+    {
+        DefinePropertySelectionFunction();
+
+        var tool = _factory.Create("Get-TestRecord");
+        var ctx = BuildContext(tool, arguments: null);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsNotNull(result.StructuredContent);
+        var item = result.StructuredContent.Value.GetProperty("items")[0];
+
+        Assert.IsTrue(item.TryGetProperty("Id", out _));
+        Assert.IsTrue(item.TryGetProperty("Name", out _));
+        Assert.IsTrue(item.TryGetProperty("SafeHandle", out _));
+        Assert.IsTrue(item.TryGetProperty("Handle", out _));
+    }
+
     private void DefineEmptyPipelineFunction()
     {
         using var ps = PowerShell.Create();
@@ -189,6 +253,28 @@ function Test-EmptyPipeline {
     [OutputType([string])]
     param()
     # Intentionally writes nothing.
+}");
+        ps.Invoke();
+    }
+
+    private void DefinePropertySelectionFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Get-TestRecord {
+    [OutputType([pscustomobject])]
+    param()
+
+    [pscustomobject]@{
+        Id = 42
+        Name = 'demo'
+        SafeHandle = 'safe-handle'
+        Handle = 'raw-handle'
+        Nested = [pscustomobject]@{
+            Value = 'nested'
+        }
+    }
 }");
         ps.Invoke();
     }

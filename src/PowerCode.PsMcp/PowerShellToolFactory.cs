@@ -72,14 +72,14 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// Creates a <see cref="PowerShellTool"/> for <paramref name="commandName"/>.
     /// </summary>
     /// <param name="commandName">The PowerShell command to invoke when the tool is called.</param>
-    /// <param name="toolName">
-    ///   Optional MCP protocol tool name exposed to clients. When <see langword="null"/>,
-    ///   <paramref name="commandName"/> is used as the tool name (backward-compatible default).
+    /// <param name="config">
+    ///   Optional per-command MCP configuration. When no name is supplied, <paramref name="commandName"/>
+    ///   is used as the tool name. When no depth override is supplied, the factory default is used.
     /// </param>
     /// <exception cref="ArgumentException">
     ///   Thrown when <paramref name="commandName"/> cannot be resolved by <c>Get-Command</c>.
     /// </exception>
-    public PowerShellTool Create(string commandName, string? toolName = null)
+    public PowerShellTool Create(string commandName, McpToolConfig? config = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
 
@@ -89,16 +89,25 @@ internal sealed class PowerShellToolFactory : IDisposable
         var description = BuildDescription(helpInfo, syntax);
         var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions);
         var outputSchema = BuildOutputSchema(commandInfo);
+        var toolName = config?.Name ?? commandName;
+        var toolDepth = config?.Depth ?? _jsonDepth;
 
         var protocolTool = new Tool
         {
-            Name = toolName ?? commandName,
+            Name = toolName,
             Description = description,
             InputSchema = inputSchema,
             OutputSchema = outputSchema
         };
 
-        return new PowerShellTool(commandName, protocolTool, _runspace, _runspaceLock, _jsonDepth);
+        return new PowerShellTool(
+            commandName,
+            protocolTool,
+            _runspace,
+            _runspaceLock,
+            toolDepth,
+            config?.Property,
+            config?.ExcludeProperty);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -414,7 +423,7 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// semantics where commands write zero or more objects to the pipeline.
     /// Returns <see langword="null"/> when no output types are declared.
     /// </summary>
-    private static JsonElement? BuildOutputSchema(CommandInfo commandInfo)
+    private JsonElement? BuildOutputSchema(CommandInfo commandInfo)
     {
         if (commandInfo.OutputType.Count == 0)
             return null;
@@ -443,9 +452,10 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// <summary>
     /// Builds a JSON Schema fragment describing a single pipeline object of the given <paramref name="type"/>.
     /// For basic types, returns the corresponding JSON Schema primitive.
-    /// For complex types, reflects public instance properties into an object schema.
+    /// For complex types, reflects public CLR instance properties and merges in any ETS-defined
+    /// properties registered via <c>Update-TypeData</c> or PS1XML files.
     /// </summary>
-    private static Dictionary<string, object?> BuildItemSchema(Type? type)
+    private Dictionary<string, object?> BuildItemSchema(Type? type)
     {
         if (type is null || type == typeof(void))
             return new Dictionary<string, object?> { ["type"] = "object" };
@@ -476,13 +486,10 @@ internal sealed class PowerShellToolFactory : IDisposable
             };
         }
 
-        // Complex type: reflect public instance properties.
-        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
-        if (properties.Length == 0)
-            return new Dictionary<string, object?> { ["type"] = "object" };
-
         var propSchemas = new Dictionary<string, object?>();
-        foreach (var prop in properties)
+
+        // Reflect public CLR instance properties.
+        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             var propType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
             if (propType.IsArray)
@@ -504,11 +511,116 @@ internal sealed class PowerShellToolFactory : IDisposable
             }
         }
 
+        // Merge ETS-defined properties (alias, code, note, script) registered for this type.
+        // ETS entries supplement and can override CLR property schemas.
+        foreach (var (name, schema) in GetEtsProperties(type))
+            propSchemas[name] = schema;
+
+        if (propSchemas.Count == 0)
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
         return new Dictionary<string, object?>
         {
             ["type"] = "object",
             ["properties"] = propSchemas
         };
+    }
+
+    /// <summary>
+    /// Queries <c>Get-TypeData</c> for ETS members registered on <paramref name="type"/> and yields
+    /// name/schema pairs for each property member. Internal PS members prefixed with <c>__</c> are skipped.
+    /// </summary>
+    private IEnumerable<(string Name, Dictionary<string, object?> Schema)> GetEtsProperties(Type type)
+    {
+        if (type.FullName is null) yield break;
+
+        TypeData? typeData;
+        try
+        {
+            using var ps = PowerShell.Create();
+            ps.Runspace = _runspace;
+            ps.AddCommand("Get-TypeData").AddParameter("TypeName", type.FullName);
+            typeData = ps.Invoke().FirstOrDefault()?.BaseObject as TypeData;
+        }
+        catch
+        {
+            yield break;
+        }
+
+        if (typeData is null) yield break;
+
+        foreach (var (name, member) in typeData.Members)
+        {
+            // Skip internal/metadata members such as __NounName.
+            if (name.StartsWith("__", StringComparison.Ordinal)) continue;
+
+            var schema = member switch
+            {
+                AliasPropertyData alias => BuildAliasPropertySchema(alias, type),
+                CodePropertyData code   => BuildCodePropertySchema(code),
+                NotePropertyData note   => BuildNotePropertySchema(note),
+                // Script properties have no static type information.
+                ScriptPropertyData      => new Dictionary<string, object?> { ["type"] = "object" },
+                _                       => null
+            };
+
+            if (schema is not null) yield return (name, schema);
+        }
+    }
+
+    /// <summary>
+    /// Resolves an <see cref="AliasPropertyData"/> to a JSON Schema by looking up the referenced
+    /// CLR property on <paramref name="declaringType"/>.
+    /// Falls back to <c>{"type":"object"}</c> when the reference cannot be resolved.
+    /// </summary>
+    private static Dictionary<string, object?> BuildAliasPropertySchema(
+        AliasPropertyData alias, Type declaringType)
+    {
+        var referenced = declaringType.GetProperty(
+            alias.ReferencedMemberName,
+            BindingFlags.Public | BindingFlags.Instance);
+
+        if (referenced is null)
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
+        var refType = Nullable.GetUnderlyingType(referenced.PropertyType) ?? referenced.PropertyType;
+        var (jt, jf) = MapToJsonSchemaType(refType);
+        var schema = new Dictionary<string, object?> { ["type"] = jt };
+        if (jf is not null) schema["format"] = jf;
+        return schema;
+    }
+
+    /// <summary>
+    /// Derives a JSON Schema from a <see cref="CodePropertyData"/> getter's return type.
+    /// Falls back to <c>{"type":"object"}</c> when no getter is available.
+    /// </summary>
+    private static Dictionary<string, object?> BuildCodePropertySchema(CodePropertyData code)
+    {
+        if (code.GetCodeReference is null)
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
+        var returnType = Nullable.GetUnderlyingType(code.GetCodeReference.ReturnType)
+                         ?? code.GetCodeReference.ReturnType;
+        var (jt, jf) = MapToJsonSchemaType(returnType);
+        var schema = new Dictionary<string, object?> { ["type"] = jt };
+        if (jf is not null) schema["format"] = jf;
+        return schema;
+    }
+
+    /// <summary>
+    /// Derives a JSON Schema from the runtime type of a <see cref="NotePropertyData"/>'s value.
+    /// Falls back to <c>{"type":"object"}</c> for null values.
+    /// </summary>
+    private static Dictionary<string, object?> BuildNotePropertySchema(NotePropertyData note)
+    {
+        if (note.Value is null)
+            return new Dictionary<string, object?> { ["type"] = "object" };
+
+        var valType = Nullable.GetUnderlyingType(note.Value.GetType()) ?? note.Value.GetType();
+        var (jt, jf) = MapToJsonSchemaType(valType);
+        var schema = new Dictionary<string, object?> { ["type"] = jt };
+        if (jf is not null) schema["format"] = jf;
+        return schema;
     }
 
     /// <summary>

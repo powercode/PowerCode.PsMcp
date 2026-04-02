@@ -19,7 +19,7 @@ Exposes PowerShell commands as MCP tools over JSON-RPC/stdio using automatic com
 
 ```
 Start-McpServer [[-Module] <string[]>] [-Include <string[]>] [-Exclude <string[]>]
- [-NameMap <hashtable>] [-ScriptPath <string>] [-ScriptBlock <scriptblock>] [-Depth <int>]
+ [-CommandConfiguration <hashtable>] [-ScriptPath <string>] [-ScriptBlock <scriptblock>] [-Depth <int>]
  [<CommonParameters>]
 ```
 
@@ -46,10 +46,11 @@ can only pull in commands from the discovery delta **or** from a module explicit
 `-Module`. A baseline command such as `Get-Date` can therefore only be included when its owning
 module (`Microsoft.PowerShell.Utility`) is also passed via `-Module`.
 
-**NameMap**
+**CommandConfiguration**
 
-`-NameMap` is a hashtable that maps friendly MCP tool names (keys) to real PowerShell command
-names (values). Commands not present in the map keep their original name.
+`-CommandConfiguration` is a hashtable whose keys are PowerShell command names and whose values
+are `McpToolConfig` objects created by `New-McpToolConfig`. This allows per-command control over
+friendly tool names, selected output properties, excluded properties, and JSON serialization depth.
 
 ## EXAMPLES
 
@@ -117,15 +118,19 @@ Start-McpServer -Module Microsoft.PowerShell.Utility -Include 'Get-Date'
 Imports `Microsoft.PowerShell.Utility` and uses `-Include` to explicitly pull in `Get-Date`
 (which would otherwise be excluded as a baseline command).
 
-### Example 5 — Rename tools with NameMap and filter with wildcards
+### Example 5 — Configure tools with CommandConfiguration and filter with wildcards
 
 ```powershell
+$toolConfig = @{
+  'Get-Item' = New-McpToolConfig -Name 'list-items' -Property Name, FullName
+}
+
 Start-McpServer -Module MyModule -Include 'Get-*' -Exclude 'Get-Secret' `
-                -NameMap @{ 'list-items' = 'Get-Item' }
+        -CommandConfiguration $toolConfig
 ```
 
 Imports `MyModule`, includes all `Get-*` commands (excluding `Get-Secret`), and renames
-`Get-Item` to `list-items` in the MCP protocol.
+`Get-Item` to `list-items` in the MCP protocol while restricting its output to the selected properties.
 
 ### Example 6 — Increase JSON depth for deeply nested output
 
@@ -227,12 +232,13 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
-### -NameMap
+### -CommandConfiguration
 
-A hashtable that maps friendly MCP tool names (keys) to real PowerShell command names (values).
-Commands not present in the map keep their original name. Key lookup is case-insensitive.
+A hashtable that maps PowerShell command names (keys) to `McpToolConfig` values created by
+`New-McpToolConfig`. Commands not present in the table keep their original tool name and use the
+global `-Depth` value.
 
-Example: `@{ 'list-items' = 'Get-Item'; 'now' = 'Get-Date' }`
+Example: `@{ 'Get-Item' = (New-McpToolConfig -Name 'list-items' -Property Name, FullName); 'Get-Date' = (New-McpToolConfig -Name 'now') }`
 
 ```yaml
 Type: System.Collections.Hashtable

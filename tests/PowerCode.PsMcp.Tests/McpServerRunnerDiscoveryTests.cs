@@ -124,54 +124,56 @@ public sealed class McpServerRunnerDiscoveryTests
         Assert.IsEmpty(result);
     }
 
-    // ── ResolveToolName ──────────────────────────────────────────────────────
+    // ── Command configuration lookup ────────────────────────────────────────
 
     [TestMethod]
-    public void ResolveToolName_NullNameMap_ReturnsCommandName()
+    public void CommandConfiguration_EmptyDictionary_HasNoConfiguredEntry()
     {
-        var result = McpServerRunner.ResolveToolName("Get-Process", null);
+        var commandConfiguration = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase);
+        var found = commandConfiguration.TryGetValue("Get-Process", out _);
 
-        Assert.AreEqual("Get-Process", result);
+        Assert.IsFalse(found);
     }
 
     [TestMethod]
-    public void ResolveToolName_MatchInMap_ReturnsFriendlyName()
+    public void CommandConfiguration_MatchingCommandName_ReturnsConfiguredFriendlyName()
     {
-        var nameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var commandConfiguration = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase)
         {
-            ["list-procs"] = "Get-Process"
+            ["Get-Process"] = new McpToolConfig { Name = "list-procs" }
         };
 
-        var result = McpServerRunner.ResolveToolName("Get-Process", nameMap);
+        var found = commandConfiguration.TryGetValue("Get-Process", out var config);
 
-        Assert.AreEqual("list-procs", result);
+        Assert.IsTrue(found);
+        Assert.AreEqual("list-procs", config!.Name);
     }
 
     [TestMethod]
-    public void ResolveToolName_NoMatchInMap_ReturnsCommandName()
+    public void CommandConfiguration_UnconfiguredCommand_HasNoConfiguredEntry()
     {
-        var nameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var commandConfiguration = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase)
         {
-            ["list-procs"] = "Get-Process"
+            ["Get-Process"] = new McpToolConfig { Name = "list-procs" }
         };
 
-        var result = McpServerRunner.ResolveToolName("Get-Date", nameMap);
+        var found = commandConfiguration.TryGetValue("Get-Date", out _);
 
-        Assert.AreEqual("Get-Date", result);
+        Assert.IsFalse(found);
     }
 
     [TestMethod]
-    public void ResolveToolName_CaseInsensitiveMatch_ReturnsFriendlyName()
+    public void CommandConfiguration_CaseInsensitiveCommandKey_ReturnsConfiguredFriendlyName()
     {
-        var nameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var commandConfiguration = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase)
         {
-            ["list-procs"] = "Get-Process"
+            ["Get-Process"] = new McpToolConfig { Name = "list-procs" }
         };
 
-        // Command name with different casing should still match.
-        var result = McpServerRunner.ResolveToolName("get-process", nameMap);
+        var found = commandConfiguration.TryGetValue("get-process", out var config);
 
-        Assert.AreEqual("list-procs", result);
+        Assert.IsTrue(found);
+        Assert.AreEqual("list-procs", config!.Name);
     }
 
     // ── ImportModules ────────────────────────────────────────────────────────

@@ -42,7 +42,7 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     [TestMethod]
     public void Create_WithToolName_SetsProtocolToolNameToProvidedName()
     {
-        var tool = _factory.Create("Get-Process", "list-procs");
+        var tool = _factory.Create("Get-Process", new McpToolConfig { Name = "list-procs" });
 
         Assert.AreEqual("list-procs", tool.ProtocolTool.Name);
     }
@@ -50,9 +50,19 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     [TestMethod]
     public void Create_WithNullToolName_UsesCommandNameAsDefault()
     {
-        var tool = _factory.Create("Get-Process", null);
+        var tool = _factory.Create("Get-Process", config: null);
 
         Assert.AreEqual("Get-Process", tool.ProtocolTool.Name);
+    }
+
+    [TestMethod]
+    public void Create_WithConfigDepth_OverridesFactoryDefault()
+    {
+        var tool = _factory.Create("Get-Process", new McpToolConfig { Depth = 4 });
+        var jsonDepthField = typeof(PowerShellTool).GetField("_jsonDepth", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        Assert.IsNotNull(jsonDepthField);
+        Assert.AreEqual(4, jsonDepthField.GetValue(tool));
     }
 
     // ── Input schema ─────────────────────────────────────────────────────────

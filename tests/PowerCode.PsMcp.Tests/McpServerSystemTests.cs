@@ -135,7 +135,7 @@ public sealed class McpServerSystemTests
             scriptBlockText: GetCurrentWeatherDefinition,
             include: null,
             exclude: null,
-            nameMap: null,
+            commandConfig: null,
             jsonDepth: 2,
             loggerFactory: null,
             cts.Token);
@@ -180,7 +180,7 @@ public sealed class McpServerSystemTests
             scriptBlockText: GetCurrentWeatherDefinition,
             include: ["Get-Process"],
             exclude: null,
-            nameMap: null,
+            commandConfig: null,
             jsonDepth: 2,
             loggerFactory: null,
             cts.Token);
@@ -204,7 +204,7 @@ public sealed class McpServerSystemTests
     }
 
     [TestMethod]
-    public async Task ListToolsAsync_DiscoveryModeWithNameMap_ExposesToolWithFriendlyName()
+    public async Task ListToolsAsync_DiscoveryModeWithCommandConfiguration_ExposesToolWithFriendlyName()
     {
         var clientToServer = new Pipe();
         var serverToClient = new Pipe();
@@ -215,9 +215,9 @@ public sealed class McpServerSystemTests
             clientToServer.Reader.AsStream(),
             serverToClient.Writer.AsStream());
 
-        var nameMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        var commandConfig = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase)
         {
-            ["get-weather"] = "Get-CurrentWeather"
+            ["Get-CurrentWeather"] = new McpToolConfig { Name = "get-weather" }
         };
 
         var serverTask = runner.RunAsync(
@@ -226,7 +226,7 @@ public sealed class McpServerSystemTests
             scriptBlockText: GetCurrentWeatherDefinition,
             include: null,
             exclude: null,
-            nameMap: nameMap,
+            commandConfig: commandConfig,
             jsonDepth: 2,
             loggerFactory: null,
             cts.Token);
@@ -240,9 +240,9 @@ public sealed class McpServerSystemTests
         var tools = await client.ListToolsAsync(options: null, cts.Token);
         var toolNames = tools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // The tool must appear under the friendly name from NameMap.
+        // The tool must appear under the friendly name from CommandConfiguration.
         Assert.Contains("get-weather", toolNames,
-            "Tool should appear as 'get-weather' after NameMap mapping.");
+            "Tool should appear as 'get-weather' after CommandConfiguration mapping.");
 
         // The original command name must not be exposed directly.
         Assert.DoesNotContain("Get-CurrentWeather", toolNames,

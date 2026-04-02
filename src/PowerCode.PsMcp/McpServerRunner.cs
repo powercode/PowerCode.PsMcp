@@ -109,7 +109,7 @@ internal sealed class McpServerRunner
 
     /// <summary>
     /// Starts the MCP server using command discovery: snapshots baseline commands, configures
-    /// a runspace, discovers new commands, applies Include/Exclude filters and NameMap, then
+    /// a runspace, discovers new commands, applies Include/Exclude filters and CommandConfiguration, then
     /// runs until <paramref name="cancellationToken"/> fires.
     /// </summary>
     /// <exception cref="InvalidOperationException">
@@ -121,14 +121,14 @@ internal sealed class McpServerRunner
         string? scriptBlockText,
         string[]? include,
         string[]? exclude,
-        IDictionary<string, string>? nameMap,
+        IDictionary<string, McpToolConfig>? commandConfig,
         int jsonDepth,
         ILoggerFactory? loggerFactory,
         CancellationToken cancellationToken)
     {
         var baseline = GetDefaultCommandNames();
         using var runspace = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText);
-        var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, modules, include, exclude, nameMap, jsonDepth);
+        var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, modules, include, exclude, commandConfig, jsonDepth);
         await RunAsync(toolCollection, loggerFactory, cancellationToken);
     }
 
@@ -155,7 +155,7 @@ internal sealed class McpServerRunner
 
     /// <summary>
     /// Collects all commands from <paramref name="runspace"/>, diffs against <paramref name="baseline"/>,
-    /// applies wildcard Include/Exclude filters, maps names via <paramref name="nameMap"/>,
+    /// applies wildcard Include/Exclude filters, applies per-command configuration from <paramref name="commandConfig"/>,
     /// and builds the <see cref="McpServerPrimitiveCollection{T}"/> ready for the transport layer.
     /// </summary>
     /// <remarks>
@@ -171,7 +171,7 @@ internal sealed class McpServerRunner
         string[]? modules,
         string[]? include,
         string[]? exclude,
-        IDictionary<string, string>? nameMap,
+        IDictionary<string, McpToolConfig>? commandConfig,
         int jsonDepth)
     {
         var allCommands = GetAllCommandNames(runspace);
@@ -200,8 +200,9 @@ internal sealed class McpServerRunner
         var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
         foreach (var cmdName in discovered)
         {
-            var toolName = ResolveToolName(cmdName, nameMap);
-            toolCollection.Add(factory.Create(cmdName, toolName));
+            McpToolConfig? config = null;
+            commandConfig?.TryGetValue(cmdName, out config);
+            toolCollection.Add(factory.Create(cmdName, config));
         }
 
         return toolCollection;
@@ -337,25 +338,4 @@ internal sealed class McpServerRunner
         return candidates;
     }
 
-    /// <summary>
-    /// Resolves the MCP tool name for <paramref name="commandName"/> using an optional <paramref name="nameMap"/>.
-    /// </summary>
-    /// <param name="commandName">The real PowerShell command name.</param>
-    /// <param name="nameMap">
-    ///   Maps friendly tool names (keys) to real command names (values). Case-insensitive value matching.
-    ///   When <see langword="null"/>, <paramref name="commandName"/> is returned unchanged.
-    /// </param>
-    internal static string ResolveToolName(string commandName, IDictionary<string, string>? nameMap)
-    {
-        if (nameMap is null)
-            return commandName;
-
-        foreach (var (friendlyName, realName) in nameMap)
-        {
-            if (string.Equals(realName, commandName, StringComparison.OrdinalIgnoreCase))
-                return friendlyName;
-        }
-
-        return commandName;
-    }
 }

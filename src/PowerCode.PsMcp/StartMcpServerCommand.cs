@@ -18,7 +18,8 @@ namespace PowerCode.PsMcp;
 /// <example>
 ///   <code>Start-McpServer -Module MyModule</code>
 ///   <code>Start-McpServer -ScriptBlock { function Get-Foo { 'bar' } } -Include Get-Foo, Get-Date</code>
-///   <code>Start-McpServer -Module MyModule -Include "Get-*" -Exclude "Get-Secret" -NameMap @{ "list-procs" = "Get-Process" }</code>
+///   <code>$config = @{ "Get-Process" = (New-McpToolConfig -Name "list-procs" -Property Id, Name -Depth 3) }</code>
+///   <code>Start-McpServer -Module MyModule -Include "Get-*" -Exclude "Get-Secret" -CommandConfiguration $config</code>
 /// </example>
 [Cmdlet(VerbsLifecycle.Start, "McpServer")]
 [OutputType(typeof(void))]
@@ -44,12 +45,12 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     public string[]? Exclude { get; set; }
 
     /// <summary>
-    /// Maps friendly MCP tool names (keys) to real PowerShell command names (values).
-    /// Example: <c>@{ "get-weather" = "Get-CurrentWeather" }</c>
+    /// Maps PowerShell command names (keys) to <see cref="McpToolConfig"/> values created by
+    /// <c>New-McpToolConfig</c>.
     /// </summary>
-    [Parameter(HelpMessage = "Maps friendly MCP tool names (keys) to real PowerShell command names (values), ex:@{now = 'Get-Date'}")]
+    [Parameter(HelpMessage = "Per-command configuration: keys are command names, values are McpToolConfig objects from New-McpToolConfig")]
 #pragma warning disable CA2227 // Setter required for PowerShell parameter binding
-    public Hashtable? NameMap { get; set; }
+    public Hashtable? CommandConfiguration { get; set; }
 #pragma warning restore CA2227
 
     // ── Shared parameters ────────────────────────────────────────────────────
@@ -104,17 +105,32 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
                 return;
             }
 
-            // Convert the Hashtable NameMap to a case-insensitive IDictionary<string, string>.
-            Dictionary<string, string>? nameMapDict = null;
-            if (NameMap is not null)
+            // Convert the Hashtable CommandConfiguration to a case-insensitive IDictionary<string, McpToolConfig>.
+            Dictionary<string, McpToolConfig>? configDict = null;
+            if (CommandConfiguration is not null)
             {
-                nameMapDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (DictionaryEntry entry in NameMap)
-                    nameMapDict[entry.Key.ToString()!] = entry.Value?.ToString() ?? string.Empty;
+                configDict = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase);
+                foreach (DictionaryEntry entry in CommandConfiguration)
+                {
+                    var commandName = entry.Key.ToString()!;
+                    try
+                    {
+                        configDict[commandName] = LanguagePrimitives.ConvertTo<McpToolConfig>(entry.Value);
+                    }
+                    catch (PSInvalidCastException ex)
+                    {
+                        ThrowTerminatingError(new ErrorRecord(
+                            new PSArgumentException(
+                                $"Value for key '{commandName}' must be a McpToolConfig (use New-McpToolConfig).", ex),
+                            "InvalidCommandConfiguration",
+                            ErrorCategory.InvalidArgument,
+                            entry.Value));
+                    }
+                }
             }
 
 #pragma warning disable CA2025 // GetResult() blocks synchronously; loggerFactory outlives the task
-            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), Include, Exclude, nameMapDict, Depth, loggerFactory, _cts.Token)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), Include, Exclude, configDict, Depth, loggerFactory, _cts.Token)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025

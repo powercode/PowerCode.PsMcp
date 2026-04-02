@@ -16,8 +16,8 @@
     # Requires PowerShell 7.4 (runs on .NET 8).
     PowerShellVersion = '7.4'
 
-    # Only export the Start-McpServer entry-point.
-    CmdletsToExport   = @('Start-McpServer')
+    # Export the public cmdlet entry points.
+    CmdletsToExport   = @('Start-McpServer', 'New-McpToolConfig')
     FunctionsToExport = @()
     AliasesToExport   = @()
     VariablesToExport = @()

@@ -69,13 +69,20 @@ Start-McpServer -Module MyModule -Include 'Get-*' -Exclude 'Get-Secret'
 Start-McpServer -Module Microsoft.PowerShell.Utility -Include 'Get-Date'
 ```
 
-### Rename tools with NameMap
+### Configure tools with CommandConfiguration
 
 ```powershell
-Start-McpServer -Module MyModule -NameMap @{ 'list-items' = 'Get-Item' }
+$toolConfig = @{
+  'Get-Item' = New-McpToolConfig -Name 'list-items' -Property Name, FullName
+  'Get-Date' = New-McpToolConfig -Name 'now' -Depth 4
+}
+
+Start-McpServer -Module MyModule -CommandConfiguration $toolConfig
 ```
 
-Keys are the friendly MCP tool names; values are the real PowerShell command names.
+Keys are the real PowerShell command names; values are `McpToolConfig` objects created with
+`New-McpToolConfig`. Each config can rename the tool, select or exclude properties, and override
+the JSON depth for that command only.
 
 ### Increase JSON serialisation depth
 
@@ -113,7 +120,7 @@ The server communicates over **stdio**. Point your MCP client at the `pwsh` exec
 | `-Module` | `string[]` | Module name(s) or path(s) to import before discovery. |
 | `-Include` | `string[]` | Wildcard patterns for commands to include. |
 | `-Exclude` | `string[]` | Wildcard patterns for commands to exclude. |
-| `-NameMap` | `hashtable` | Maps friendly MCP tool names (keys) to command names (values). |
+| `-CommandConfiguration` | `hashtable` | Maps command names (keys) to `McpToolConfig` values for per-command naming, property selection, and depth overrides. |
 | `-ScriptPath` | `string` | Path to a `.ps1` script to dot-source before starting. |
 | `-ScriptBlock` | `scriptblock` | Script block invoked before starting the server. |
 | `-Depth` | `int` | JSON serialisation depth for tool output (1–10, default 2). |
@@ -133,7 +140,7 @@ dotnet test PowerCode.PsMcp.slnx -c Debug
 1. A baseline snapshot of all commands in a clean runspace is taken.
 2. Your modules/script are loaded into a new runspace.
 3. The delta (new commands only) forms the candidate tool set.
-4. `-Include`/`-Exclude` patterns refine the set; `-NameMap` renames tools.
+4. `-Include`/`-Exclude` patterns refine the set; `-CommandConfiguration` applies per-command naming and output shaping.
 5. Each tool's description and parameter schema are populated from `Get-Help`.
 6. An MCP server is started over stdin/stdout using the [ModelContextProtocol .NET SDK](https://github.com/modelcontextprotocol/csharp-sdk).
 

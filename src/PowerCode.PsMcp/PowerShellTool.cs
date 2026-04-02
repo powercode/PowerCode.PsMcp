@@ -19,6 +19,8 @@ internal sealed class PowerShellTool : McpServerTool
     private readonly Runspace _runspace;
     private readonly SemaphoreSlim _runspaceLock;
     private readonly int _jsonDepth;
+    private readonly string[]? _selectProperty;
+    private readonly string[]? _excludeProperty;
 
     /// <summary>
     /// Initialises a new tool that wraps <paramref name="commandName"/>.
@@ -28,12 +30,16 @@ internal sealed class PowerShellTool : McpServerTool
     /// <param name="runspace">Shared runspace; access is serialised by <paramref name="runspaceLock"/>.</param>
     /// <param name="runspaceLock">Semaphore ensuring single-threaded runspace use.</param>
     /// <param name="jsonDepth">Depth passed to <c>ConvertTo-Json</c>.</param>
+    /// <param name="selectProperty">Properties to include in tool output via <c>Select-Object -Property</c>.</param>
+    /// <param name="excludeProperty">Properties to exclude from tool output via <c>Select-Object -ExcludeProperty</c>.</param>
     public PowerShellTool(
         string commandName,
         Tool protocolTool,
         Runspace runspace,
         SemaphoreSlim runspaceLock,
-        int jsonDepth)
+        int jsonDepth,
+        string[]? selectProperty = null,
+        string[]? excludeProperty = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
         ArgumentNullException.ThrowIfNull(protocolTool);
@@ -45,6 +51,8 @@ internal sealed class PowerShellTool : McpServerTool
         _runspace = runspace;
         _runspaceLock = runspaceLock;
         _jsonDepth = jsonDepth;
+        _selectProperty = selectProperty;
+        _excludeProperty = excludeProperty;
     }
 
     /// <inheritdoc />
@@ -128,6 +136,7 @@ internal sealed class PowerShellTool : McpServerTool
         System.Collections.ObjectModel.Collection<PSObject> results)
     {
         var (outputObjects, textLines, hasErrors) = ClassifyPipelineResults(results);
+        outputObjects = ApplyPropertySelection(outputObjects);
 
         // Produce structured JSON in an {"items": [...]} envelope matching pipeline semantics.
         // When outputSchema is defined, always include structuredContent (even for empty pipelines).
@@ -241,6 +250,33 @@ internal sealed class PowerShellTool : McpServerTool
         }
 
         return (outputObjects, textLines, hasErrors);
+    }
+
+    /// <summary>
+    /// Applies any configured property selection to the pipeline output before JSON serialization.
+    /// </summary>
+    private List<PSObject> ApplyPropertySelection(List<PSObject> objects)
+    {
+        if (_selectProperty is null && _excludeProperty is null)
+        {
+            return objects;
+        }
+
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddCommand("Select-Object");
+
+        if (_selectProperty is not null)
+        {
+            ps.AddParameter("Property", _selectProperty);
+        }
+
+        if (_excludeProperty is not null)
+        {
+            ps.AddParameter("ExcludeProperty", _excludeProperty);
+        }
+
+        return ps.Invoke<PSObject>(objects).ToList();
     }
 
     /// <summary>
