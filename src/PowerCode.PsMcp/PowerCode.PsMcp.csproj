@@ -2,6 +2,8 @@
   <PropertyGroup>
     <!-- Copy all NuGet dependency assemblies to output so PowerShell can load them. -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- The module doesn't require RID-specific runtime assets in build output. -->
+    <RemoveRuntimesFolderFromOutput>true</RemoveRuntimesFolderFromOutput>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" />
@@ -22,4 +24,10 @@
       <_Parameter1>PowerCode.PsMcp.Tests</_Parameter1>
     </AssemblyAttribute>
   </ItemGroup>
+
+  <Target Name="RemoveRuntimesFolderFromOutput"
+          AfterTargets="Build"
+          Condition="'$(RemoveRuntimesFolderFromOutput)' == 'true' and Exists('$(OutputPath)runtimes')">
+    <RemoveDir Directories="$(OutputPath)runtimes" />
+  </Target>
 </Project>
