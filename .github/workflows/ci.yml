@@ -41,7 +41,7 @@ jobs:
         run: dotnet build --configuration Release --no-restore -bl:artifacts/build.binlog
 
       - name: Unit Tests
-        run: dotnet test --configuration Release --no-build --report-trx --results-directory ./test-results -bl:artifacts/test.binlog
+        run: dotnet test --configuration Release --no-build --filter TestCategory!=LocalHelpInstalled --report-trx --results-directory ./test-results -bl:artifacts/test.binlog
 
       - name: Publish Test Results
         uses: dorny/test-reporter@v1

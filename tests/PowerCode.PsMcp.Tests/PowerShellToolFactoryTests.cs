@@ -215,6 +215,7 @@ function Get-CurrentWeather {
         CollectionAssert.Contains(required, "unit");
     }
     [TestMethod]
+    [TestCategory("LocalHelpInstalled")]
     public void Create_WithGetDate_DescriptionContainsSynopsisAndSyntax()
     {
         var tool = _factory.Create("Get-Date");
