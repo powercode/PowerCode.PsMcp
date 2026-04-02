@@ -93,7 +93,7 @@ public sealed class PowerShellToolTests : IDisposable
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);
 
         Assert.IsNotNull(result);
-        Assert.IsTrue(result.Content.Count > 0, "Expected non-empty content.");
+        Assert.IsNotEmpty(result.Content, "Expected non-empty content.");
         Assert.IsInstanceOfType<TextContentBlock>(result.Content[0]);
         Assert.IsTrue(result.IsError is not true, "Get-Date should not return an error.");
     }
@@ -111,7 +111,7 @@ public sealed class PowerShellToolTests : IDisposable
 
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);
 
-        Assert.IsTrue(result.IsError == true, "Write-Error should produce an error result.");
+        Assert.AreEqual(true, result.IsError, "Write-Error should produce an error result.");
     }
 
     [TestMethod]
@@ -141,7 +141,7 @@ public sealed class PowerShellToolTests : IDisposable
 
         var result = await tool.InvokeAsync(ctx, cts.Token);
 
-        Assert.IsTrue(result.IsError == true, "A cancelled invocation should return IsError=true.");
+        Assert.AreEqual(true, result.IsError, "A cancelled invocation should return IsError=true.");
     }
 
     // ── Helper ────────────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -71,5 +73,67 @@ internal sealed class McpServerRunner
 
         await using var server = McpServer.Create(transport, options, loggerFactory);
         await server.RunAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Starts the MCP server with the full lifecycle: creates a <see cref="McpPsHost"/>,
+    /// opens a runspace, optionally loads a script, builds tools via
+    /// <see cref="PowerShellToolFactory"/>, and runs until <paramref name="cancellationToken"/> fires.
+    /// </summary>
+    public async Task RunAsync(
+        string[] toolNames,
+        string? scriptPath,
+        string? scriptBlockText,
+        int jsonDepth,
+        ILoggerFactory? loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(toolNames);
+
+        var host = new McpPsHost();
+        using var runspace = RunspaceFactory.CreateRunspace(host);
+        runspace.Open();
+
+        if (scriptPath is not null)
+            DotSourceScript(runspace, scriptPath);
+        else if (scriptBlockText is not null)
+            InvokeScriptBlock(runspace, scriptBlockText);
+
+        using var factory = new PowerShellToolFactory(runspace, jsonDepth);
+        var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
+        foreach (var name in toolNames)
+            toolCollection.Add(factory.Create(name));
+
+        await RunAsync(toolCollection, loggerFactory, cancellationToken);
+    }
+
+    internal static void DotSourceScript(Runspace runspace, string scriptPath)
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        // Escape single quotes in the path to prevent script injection.
+        ps.AddScript($". '{scriptPath.Replace("'", "''", StringComparison.Ordinal)}'");
+        ps.Invoke();
+
+        if (ps.HadErrors)
+        {
+            var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
+            throw new InvalidOperationException($"Failed to dot-source '{scriptPath}': {errors}");
+        }
+    }
+
+    internal static void InvokeScriptBlock(Runspace runspace, string scriptBlockText)
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+        ps.AddScript(scriptBlockText);
+        ps.Invoke();
+
+        if (ps.HadErrors)
+        {
+            var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
+            throw new InvalidOperationException($"Failed to invoke script block: {errors}");
+        }
     }
 }

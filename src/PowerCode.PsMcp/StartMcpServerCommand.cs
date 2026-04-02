@@ -1,7 +1,5 @@
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Server;
 
 namespace PowerCode.PsMcp;
 
@@ -12,11 +10,8 @@ namespace PowerCode.PsMcp;
 ///   <see cref="StopProcessing"/> is called (e.g., Ctrl+C).
 /// </para>
 /// <para>
-///   This cmdlet is intentionally thin: it gathers parameters, constructs the required
-///   service objects (<see cref="McpPsHost"/>, <see cref="Runspace"/>,
-///   <see cref="PowerShellToolFactory"/>, <see cref="McpServerRunner"/>), and then
-///   delegates all business logic to those services.  No transport, server option
-///   wiring, command resolution, or invocation logic lives here.
+///   This cmdlet is intentionally thin: it gathers parameters and delegates all
+///   business logic to <see cref="McpServerRunner"/>.
 /// </para>
 /// </summary>
 /// <example>
@@ -60,78 +55,37 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
 
     // ── Private state ────────────────────────────────────────────────────────
 
-    private Runspace? _runspace;
     private CancellationTokenSource? _cts;
 
     // ── Cmdlet lifecycle ─────────────────────────────────────────────────────
-
-    /// <inheritdoc />
-    protected override void BeginProcessing()
-    {
-        var host = new McpPsHost();
-        _runspace = RunspaceFactory.CreateRunspace(host);
-        _runspace.Open();
-
-        // Dot-source a helper script or invoke a script block before starting the server.
-        if (ScriptPath is not null)
-        {
-            DotSourceScript(_runspace, ScriptPath);
-        }
-        else if (ScriptBlock is not null)
-        {
-            InvokeScriptBlock(_runspace, ScriptBlock);
-        }
-    }
 
     /// <inheritdoc />
     protected override void ProcessRecord()
     {
         _cts = new CancellationTokenSource();
 
-        // Resolve each tool name into a PowerShellTool instance.
-        var factory = new PowerShellToolFactory(_runspace!, Depth);
-        var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
-
-        foreach (var name in ToolName)
-        {
-            try
-            {
-                toolCollection.Add(factory.Create(name));
-                WriteVerbose($"Registered tool: {name}");
-            }
-            catch (ArgumentException ex)
-            {
-                WriteError(new ErrorRecord(ex, "ToolNotFound", ErrorCategory.ObjectNotFound, name));
-            }
-        }
-
-        if (toolCollection.Count == 0)
-        {
-            ThrowTerminatingError(new ErrorRecord(
-                new InvalidOperationException(
-                    "No valid tools were found. Ensure the command names are correct and any required modules are loaded."),
-                "NoValidTools",
-                ErrorCategory.InvalidOperation,
-                null));
-
-            return;
-        }
-
-        WriteVerbose($"Starting MCP server with {toolCollection.Count} tool(s) on stdio…");
-
         using var loggerFactory = CreateLoggerFactory();
         var runner = new McpServerRunner();
 
         try
         {
-            runner.RunAsync(toolCollection, loggerFactory, _cts.Token)
+#pragma warning disable CA2025 // GetResult() blocks synchronously; loggerFactory outlives the task
+            runner.RunAsync(ToolName, ScriptPath, ScriptBlock?.ToString(), Depth, loggerFactory, _cts.Token)
                   .GetAwaiter()
                   .GetResult();
+#pragma warning restore CA2025
         }
         catch (OperationCanceledException)
         {
-            // Normal shutdown triggered by StopProcessing or CancellationToken.
             WriteVerbose("MCP server stopped.");
+        }
+        catch (ArgumentException ex)
+        {
+            WriteError(new ErrorRecord(ex, "ToolNotFound", ErrorCategory.ObjectNotFound, ex.ParamName));
+        }
+        catch (InvalidOperationException ex)
+        {
+            ThrowTerminatingError(new ErrorRecord(ex, "McpServerError", ErrorCategory.InvalidOperation, null));
         }
     }
 
@@ -147,7 +101,6 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     {
         _cts?.Dispose();
         _cts = null;
-        CleanupRunspace();
     }
 
     /// <inheritdoc />
@@ -155,63 +108,9 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     {
         _cts?.Dispose();
         _cts = null;
-        _runspace?.Dispose();
-        _runspace = null;
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
-
-    private void CleanupRunspace()
-    {
-        if (_runspace is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _runspace.Close();
-            _runspace.Dispose();
-        }
-        catch (Exception ex)
-        {
-            WriteDebug($"Error closing runspace: {ex.Message}");
-        }
-        finally
-        {
-            _runspace = null;
-        }
-    }
-
-    private static void DotSourceScript(Runspace runspace, string scriptPath)
-    {
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
-        // Escape single quotes in the path to prevent script injection.
-        ps.AddScript($". '{scriptPath.Replace("'", "''")}'");
-        ps.Invoke();
-
-        if (ps.HadErrors)
-        {
-            var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
-            throw new InvalidOperationException($"Failed to dot-source '{scriptPath}': {errors}");
-        }
-    }
-
-    private static void InvokeScriptBlock(Runspace runspace, ScriptBlock scriptBlock)
-    {
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-        ps.AddScript(scriptBlock.ToString());
-        ps.Invoke();
-
-        if (ps.HadErrors)
-        {
-            var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
-            throw new InvalidOperationException($"Failed to invoke script block: {errors}");
-        }
-    }
 
     /// <summary>
     /// Creates a logger factory that writes to stderr, preserving stdout for JSON-RPC.

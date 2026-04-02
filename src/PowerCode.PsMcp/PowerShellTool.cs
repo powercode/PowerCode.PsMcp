@@ -138,16 +138,15 @@ internal sealed class PowerShellTool : McpServerTool
             return ErrorResult($"Unhandled exception executing '{_commandName}': {ex.Message}");
         }
 
-        return BuildResult(results, ps.HadErrors);
+        return BuildResult(results);
     }
 
     private CallToolResult BuildResult(
-        System.Collections.ObjectModel.Collection<PSObject> results,
-        bool hadErrors)
+        System.Collections.ObjectModel.Collection<PSObject> results)
     {
         var outputObjects = new List<PSObject>();
         var textLines = new List<string>();
-        var hasErrors = hadErrors;
+        var hasErrors = false;
 
         foreach (var result in results)
         {
@@ -180,7 +179,6 @@ internal sealed class PowerShellTool : McpServerTool
 
                 default:
                     outputObjects.Add(result);
-                    textLines.Add(result.ToString());
                     break;
             }
         }
@@ -192,10 +190,15 @@ internal sealed class PowerShellTool : McpServerTool
             try
             {
                 structuredContent = ConvertToJson(outputObjects);
+                // Use the JSON as the human-readable text for structured objects.
+                textLines.Add(structuredContent.Value.GetRawText());
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"DEBUG: ConvertTo-Json failed for '{_commandName}': {ex.Message}");
+                // Fall back to .ToString() if JSON conversion fails.
+                foreach (var obj in outputObjects)
+                    textLines.Add(obj.ToString() ?? string.Empty);
+                Console.Error.WriteLine($"ConvertTo-Json failed for '{_commandName}': {ex.Message}");
             }
         }
 
@@ -211,6 +214,7 @@ internal sealed class PowerShellTool : McpServerTool
         };
     }
 
+    // ── Private helpers ──────────────────────────────────────────────────────
     private JsonElement ConvertToJson(List<PSObject> objects)
     {
         using var ps = PowerShell.Create();

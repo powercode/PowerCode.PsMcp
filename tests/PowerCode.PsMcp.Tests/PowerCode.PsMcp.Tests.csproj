@@ -4,6 +4,10 @@
     <IsTestProject>true</IsTestProject>
     <!-- Underscore-separated Method_Scenario_Expected naming is standard for tests. -->
     <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <!-- Test classes must be public for MSTest framework discovery. -->
+    <NoWarn>$(NoWarn);CA1515</NoWarn>
+    <!-- Pre-existing: StringComparison overloads and IDisposable patterns in test helpers. -->
+    <NoWarn>$(NoWarn);CA1307;CA2000;CA2213</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <!--
@@ -11,6 +15,7 @@
       including SMA and all built-in modules, so Get-Process etc. resolve.
     -->
     <PackageReference Include="Microsoft.PowerShell.SDK" />
+    <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\PowerCode.PsMcp\PowerCode.PsMcp.csproj" />

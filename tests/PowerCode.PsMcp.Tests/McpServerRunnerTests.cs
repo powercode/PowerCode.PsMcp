@@ -14,9 +14,9 @@ namespace PowerCode.PsMcp.Tests;
 public sealed class McpServerRunnerTests
 {
     /// <summary>
-    /// Verifies that <see cref="McpServerRunner.RunAsync"/> exits quickly and
+    /// Verifies that <see cref="McpServerRunner.RunAsync(ModelContextProtocol.Server.McpServerPrimitiveCollection{ModelContextProtocol.Server.McpServerTool},Microsoft.Extensions.Logging.ILoggerFactory?,System.Threading.CancellationToken)"/> exits quickly and
     /// throws <see cref="OperationCanceledException"/> when the token is already
-    /// cancelled before the call, mirroring the behaviour that
+    /// canceled before the call, mirroring the behavior that
     /// <see cref="StartMcpServerCommand"/> relies on for graceful shutdown.
     /// </summary>
     [TestMethod]
@@ -32,7 +32,7 @@ public sealed class McpServerRunnerTests
         try
         {
             await runner.RunAsync(toolCollection, loggerFactory: null, cts.Token)
-                        .WaitAsync(TimeSpan.FromSeconds(5));
+                        .WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
         }
         catch (OperationCanceledException)
         {

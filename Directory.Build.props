@@ -8,8 +8,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Enable all .NET Roslyn analyzers and treat violations as errors. -->
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
-    <AnalysisMode>Recommended</AnalysisMode>
+    <AnalysisMode>all</AnalysisMode>
     <AnalysisLevel>latest</AnalysisLevel>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <NoWarn>$(NoWarn);CA1819;CA1031;CA2007</NoWarn>
   </PropertyGroup>
 </Project>

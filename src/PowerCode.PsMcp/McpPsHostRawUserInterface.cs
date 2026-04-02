@@ -9,41 +9,17 @@ namespace PowerCode.PsMcp;
 /// </summary>
 internal sealed class McpPsHostRawUserInterface : PSHostRawUserInterface
 {
-    private ConsoleColor _foregroundColor = ConsoleColor.White;
-    private ConsoleColor _backgroundColor = ConsoleColor.Black;
-    private Coordinates _cursorPosition = new(0, 0);
-    private Coordinates _windowPosition = new(0, 0);
-    private int _cursorSize = 25;
-    private Size _bufferSize = new(120, 9999);
-    private Size _windowSize = new(120, 50);
+    /// <inheritdoc />
+    public override ConsoleColor ForegroundColor { get; set; } = ConsoleColor.White;
 
     /// <inheritdoc />
-    public override ConsoleColor ForegroundColor
-    {
-        get => _foregroundColor;
-        set => _foregroundColor = value;
-    }
+    public override ConsoleColor BackgroundColor { get; set; } = ConsoleColor.Black;
 
     /// <inheritdoc />
-    public override ConsoleColor BackgroundColor
-    {
-        get => _backgroundColor;
-        set => _backgroundColor = value;
-    }
+    public override Coordinates CursorPosition { get; set; } = new(0, 0);
 
     /// <inheritdoc />
-    public override Coordinates CursorPosition
-    {
-        get => _cursorPosition;
-        set => _cursorPosition = value;
-    }
-
-    /// <inheritdoc />
-    public override Coordinates WindowPosition
-    {
-        get => _windowPosition;
-        set => _windowPosition = value;
-    }
+    public override Coordinates WindowPosition { get; set; } = new(0, 0);
 
     /// <inheritdoc />
     public override int CursorSize
@@ -53,18 +29,10 @@ internal sealed class McpPsHostRawUserInterface : PSHostRawUserInterface
     }
 
     /// <inheritdoc />
-    public override Size BufferSize
-    {
-        get => _bufferSize;
-        set => _bufferSize = value;
-    }
+    public override Size BufferSize { get; set; } = new(120, 9999);
 
     /// <inheritdoc />
-    public override Size WindowSize
-    {
-        get => _windowSize;
-        set => _windowSize = value;
-    }
+    public override Size WindowSize { get; set; } = new(120, 50);
 
     /// <inheritdoc />
     public override Size MaxWindowSize => new(120, 50);
@@ -77,7 +45,7 @@ internal sealed class McpPsHostRawUserInterface : PSHostRawUserInterface
 
     /// <inheritdoc />
     public override string WindowTitle { get; set; } = "PowerShell MCP Host";
-    public int CursorSize1 { get => _cursorSize; set => _cursorSize = value; }
+    public int CursorSize1 { get; set; } = 25;
 
     /// <inheritdoc />
     public override KeyInfo ReadKey(ReadKeyOptions options) =>
@@ -93,9 +61,10 @@ internal sealed class McpPsHostRawUserInterface : PSHostRawUserInterface
     public override void SetBufferContents(Rectangle rectangle, BufferCell fill) { }
 
     /// <inheritdoc />
+#pragma warning disable CA1814 // Prefer jagged arrays over multidimensional for performance; but PSHostRawUserInterface requires 2D arrays, so we have to disable this warning.
     public override BufferCell[,] GetBufferContents(Rectangle rectangle) =>
         new BufferCell[0, 0];
-
+#pragma warning restore CA1814
     /// <inheritdoc />
     public override void ScrollBufferContents(
         Rectangle source,
