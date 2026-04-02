@@ -30,4 +30,30 @@
           Condition="'$(RemoveRuntimesFolderFromOutput)' == 'true' and Exists('$(OutputPath)runtimes')">
     <RemoveDir Directories="$(OutputPath)runtimes" />
   </Target>
+
+  <Target Name="MoveDependenciesToSubfolder"
+          AfterTargets="Build;RemoveRuntimesFolderFromOutput"
+          Condition="'$(TargetFramework)' != ''">
+    <ItemGroup>
+      <!-- All DLLs in output that are NOT the module assembly itself. -->
+      <DependencyDll Include="$(OutputPath)*.dll"
+                     Exclude="$(OutputPath)PowerCode.PsMcp.dll" />
+    </ItemGroup>
+
+    <MakeDir Directories="$(OutputPath)Dependencies" />
+    <Move SourceFiles="@(DependencyDll)"
+          DestinationFolder="$(OutputPath)Dependencies"
+          OverwriteReadOnlyFiles="true" />
+
+    <!-- Also move corresponding PDB files for debuggability. -->
+    <ItemGroup>
+      <DependencyPdb Include="$(OutputPath)*.pdb"
+                     Exclude="$(OutputPath)PowerCode.PsMcp.pdb" />
+    </ItemGroup>
+
+    <Move SourceFiles="@(DependencyPdb)"
+          DestinationFolder="$(OutputPath)Dependencies"
+          OverwriteReadOnlyFiles="true"
+          Condition="'@(DependencyPdb)' != ''" />
+  </Target>
 </Project>

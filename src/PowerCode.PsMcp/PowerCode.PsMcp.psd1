@@ -24,23 +24,31 @@
 
     Filelist          = @(
         'PowerCode.PsMcp.psd1',
-        'PowerCode.PsMcp.dll',        
-        'System.Net.ServerSentEvents.dll',
-        'System.Text.Encodings.Web.dll'
-        'Microsoft.Extensions.AI.Abstractions.dll'
-        'Microsoft.Extensions.Configuration.Abstractions.dll'
-        'Microsoft.Extensions.Configuration.Binder.dll'
-        'Microsoft.Extensions.Configuration.dll'
-        'Microsoft.Extensions.DependencyInjection.Abstractions.dll'
-        'Microsoft.Extensions.DependencyInjection.dll'
-        'Microsoft.Extensions.Logging.Abstractions.dll'
-        'Microsoft.Extensions.Logging.Configuration.dll'
-        'Microsoft.Extensions.Logging.Console.dll'
-        'Microsoft.Extensions.Logging.dll'
-        'Microsoft.Extensions.Options.ConfigurationExtensions.dll'
-        'Microsoft.Extensions.Options.dll'
-        'Microsoft.Extensions.Primitives.dll'
-        'ModelContextProtocol.Core.dll'        
+        'PowerCode.PsMcp.dll',
+        'Dependencies\System.Net.ServerSentEvents.dll',
+        'Dependencies\System.Text.Encodings.Web.dll',
+        'Dependencies\System.Diagnostics.DiagnosticSource.dll',
+        'Dependencies\System.IO.Pipelines.dll',
+        'Dependencies\System.Text.Json.dll',
+        'Dependencies\Microsoft.Extensions.AI.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.Caching.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.Configuration.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.Configuration.Binder.dll',
+        'Dependencies\Microsoft.Extensions.Configuration.dll',
+        'Dependencies\Microsoft.Extensions.DependencyInjection.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.DependencyInjection.dll',
+        'Dependencies\Microsoft.Extensions.Diagnostics.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.FileProviders.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.Hosting.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.Logging.Abstractions.dll',
+        'Dependencies\Microsoft.Extensions.Logging.Configuration.dll',
+        'Dependencies\Microsoft.Extensions.Logging.Console.dll',
+        'Dependencies\Microsoft.Extensions.Logging.dll',
+        'Dependencies\Microsoft.Extensions.Options.ConfigurationExtensions.dll',
+        'Dependencies\Microsoft.Extensions.Options.dll',
+        'Dependencies\Microsoft.Extensions.Primitives.dll',
+        'Dependencies\ModelContextProtocol.dll',
+        'Dependencies\ModelContextProtocol.Core.dll',
         'en-US\PowerCode.PsMcp.dll-Help.xml'
     )
 
