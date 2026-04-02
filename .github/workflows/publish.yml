@@ -31,7 +31,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: PowerCode.PsMcp-module
-          path: PowerCode.PsMcp/
+          path: module/
 
       - name: Determine Version from Git Tag
         id: version
@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         run: >-
           ./repo/scripts/Update-PsMcpManifest.ps1
-          -ModulePath './PowerCode.PsMcp'
+          -ModulePath './module'
           -ModuleVersion '${{ steps.version.outputs.module-version }}'
           -Prerelease '${{ steps.version.outputs.prerelease }}'
 
@@ -51,4 +51,4 @@ jobs:
         shell: pwsh
         run: |
           Register-PSResourceRepository -PSGallery -Force
-          Publish-PSResource -Path:./PowerCode.PsMcp.psd1 -ApiKey:${{ secrets.PSGALLERY_API_KEY }} -Repository:PSGallery -Verbose
+          Publish-PSResource -Path:./module/PowerCode.PsMcp.psd1 -ApiKey:${{ secrets.PSGALLERY_API_KEY }} -Repository:PSGallery -Verbose
