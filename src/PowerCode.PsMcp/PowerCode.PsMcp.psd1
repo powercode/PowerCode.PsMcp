@@ -22,6 +22,8 @@
     AliasesToExport   = @()
     VariablesToExport = @()
 
+    Filelist          = @('PowerCode.PsMcp.dll', 'PowerCode.PsMcp.psd1', 'System.Net.ServerSentEvents.dll', 'System.Text.Encodings.Web.dll')
+    
     PrivateData = @{
         PSData = @{
             Tags         = @('MCP', 'AI', 'LLM', 'ModelContextProtocol')
