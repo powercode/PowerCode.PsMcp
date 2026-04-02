@@ -38,7 +38,7 @@ jobs:
         run: dotnet restore -bl:artifacts/restore.binlog
 
       - name: Build
-        run: 
+        run: |
           pwsh -noprofile -nologo -command "Install-PSResource -Name:Microsoft.PowerShell.PlatyPS -Repository:PSGallery -TrustRepository"
           dotnet build --configuration Release --no-restore -bl:artifacts/build.binlog
 
@@ -76,5 +76,4 @@ jobs:
         with:
           name: PowerCode.PsMcp-module
           path: artifacts/bin/PowerCode.PsMcp/release/
-          root-directory: artifacts/bin/PowerCode.PsMcp/release
           retention-days: 14

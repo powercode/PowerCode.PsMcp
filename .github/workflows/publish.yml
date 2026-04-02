@@ -49,6 +49,6 @@ jobs:
 
       - name: Publish to PSGallery
         shell: pwsh
-        run: 
+        run: |
           Register-PSResourceRepository -PSGallery
           Publish-PSResource -Path ./PowerCode.PsMcp.psd1 -ApiKey ${{ secrets.PSGALLERY_API_KEY }} -Repository PSGallery -Verbose
