@@ -1,13 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <!-- Copy all NuGet dependency assemblies to output so PowerShell can load them. -->
-    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
-    <!-- The module doesn't require RID-specific runtime assets in build output. -->
-    <RemoveRuntimesFolderFromOutput>true</RemoveRuntimesFolderFromOutput>
-  </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <ProjectReference Include="..\PowerCode.PsMcp.Engine\PowerCode.PsMcp.Engine.csproj" />
     <!--
       System.Management.Automation is a compile-time reference only.
       PowerShell provides its own copy at runtime, so we exclude runtime assets
@@ -25,14 +18,8 @@
     </AssemblyAttribute>
   </ItemGroup>
 
-  <Target Name="RemoveRuntimesFolderFromOutput"
-          AfterTargets="Build"
-          Condition="'$(RemoveRuntimesFolderFromOutput)' == 'true' and Exists('$(OutputPath)runtimes')">
-    <RemoveDir Directories="$(OutputPath)runtimes" />
-  </Target>
-
   <Target Name="MoveDependenciesToSubfolder"
-          AfterTargets="Build;RemoveRuntimesFolderFromOutput"
+          AfterTargets="Build"
           Condition="'$(TargetFramework)' != ''">
     <ItemGroup>
       <!-- All DLLs in output that are NOT the module assembly itself. -->

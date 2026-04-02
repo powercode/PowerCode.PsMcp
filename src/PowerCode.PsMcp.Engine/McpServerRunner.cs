@@ -43,15 +43,22 @@ internal sealed class McpServerRunner
     /// bypassing PowerShell's occupied pipeline.
     /// </summary>
     public McpServerRunner() : this(Console.OpenStandardInput(), Console.OpenStandardOutput()) { }
+
+    /// <summary>
+    /// Creates a logger factory that writes to stderr, preserving stdout for JSON-RPC.
+    /// </summary>
+    private static ILoggerFactory CreateLoggerFactory() =>
+        LoggerFactory.Create(builder =>
+            builder.AddConsole(options =>
+                options.LogToStandardErrorThreshold = LogLevel.Trace));
+
     /// <summary>
     /// Starts the MCP server and blocks until <paramref name="cancellationToken"/> is cancelled.
     /// </summary>
     /// <param name="toolCollection">Pre-built collection of tools to expose.</param>
-    /// <param name="loggerFactory">Optional logger factory; logs go to stderr via console.</param>
     /// <param name="cancellationToken">Token that triggers graceful shutdown.</param>
     public async Task RunAsync(
         McpServerPrimitiveCollection<McpServerTool> toolCollection,
-        ILoggerFactory? loggerFactory,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(toolCollection);
@@ -73,6 +80,7 @@ internal sealed class McpServerRunner
             ToolCollection = toolCollection
         };
 
+        using var loggerFactory = CreateLoggerFactory();
         await using var server = McpServer.Create(transport, options, loggerFactory);
         await server.RunAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -88,7 +96,6 @@ internal sealed class McpServerRunner
         string? scriptBlockText,
         string? callerScriptRoot,
         int jsonDepth,
-        ILoggerFactory? loggerFactory,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(toolNames);
@@ -100,7 +107,7 @@ internal sealed class McpServerRunner
         foreach (var name in toolNames)
             toolCollection.Add(factory.Create(name));
 
-        await RunAsync(toolCollection, loggerFactory, cancellationToken);
+        await RunAsync(toolCollection, cancellationToken);
     }
 
     /// <summary>
@@ -120,7 +127,6 @@ internal sealed class McpServerRunner
         string[]? exclude,
         IDictionary<string, McpToolConfig>? commandConfig,
         int jsonDepth,
-        ILoggerFactory? loggerFactory,
         CancellationToken cancellationToken)
     {
         var baseline = GetDefaultCommandNames();
@@ -128,7 +134,7 @@ internal sealed class McpServerRunner
         using var factory = new PowerShellToolFactory(runspace, jsonDepth);
 
         var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, factory, modules, include, exclude, commandConfig);
-        await RunAsync(toolCollection, loggerFactory, cancellationToken);
+        await RunAsync(toolCollection, cancellationToken);
     }
 
     /// <summary>

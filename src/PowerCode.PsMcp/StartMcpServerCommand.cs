@@ -1,7 +1,6 @@
 using System.Collections;
 using System.IO;
 using System.Management.Automation;
-using Microsoft.Extensions.Logging;
 
 namespace PowerCode.PsMcp;
 
@@ -91,7 +90,6 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     {
         _cts = new CancellationTokenSource();
 
-        using var loggerFactory = CreateLoggerFactory();
         var runner = new McpServerRunner();
 
         try
@@ -138,8 +136,8 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
                     : MyInvocation.PSScriptRoot;
             }
 
-#pragma warning disable CA2025 // GetResult() blocks synchronously; loggerFactory outlives the task
-            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, loggerFactory, _cts.Token)
+#pragma warning disable CA2025 // GetResult() blocks synchronously by design for cmdlet execution.
+        runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, _cts.Token)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025
@@ -179,13 +177,4 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
         _cts = null;
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Creates a logger factory that writes to stderr, preserving stdout for JSON-RPC.
-    /// </summary>
-    private static ILoggerFactory CreateLoggerFactory() =>
-        LoggerFactory.Create(builder =>
-            builder.AddConsole(options =>
-                options.LogToStandardErrorThreshold = LogLevel.Trace));
 }

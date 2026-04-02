@@ -15,7 +15,7 @@ namespace PowerCode.PsMcp.Tests;
 public sealed class McpServerRunnerTests
 {
     /// <summary>
-    /// Verifies that <see cref="McpServerRunner.RunAsync(ModelContextProtocol.Server.McpServerPrimitiveCollection{ModelContextProtocol.Server.McpServerTool},Microsoft.Extensions.Logging.ILoggerFactory?,System.Threading.CancellationToken)"/> exits quickly and
+    /// Verifies that <see cref="McpServerRunner.RunAsync(ModelContextProtocol.Server.McpServerPrimitiveCollection{ModelContextProtocol.Server.McpServerTool},System.Threading.CancellationToken)"/> exits quickly and
     /// throws <see cref="OperationCanceledException"/> when the token is already
     /// canceled before the call, mirroring the behavior that
     /// <see cref="StartMcpServerCommand"/> relies on for graceful shutdown.
@@ -32,7 +32,7 @@ public sealed class McpServerRunnerTests
         bool threw = false;
         try
         {
-            await runner.RunAsync(toolCollection, loggerFactory: null, cts.Token)
+            await runner.RunAsync(toolCollection, cts.Token)
                         .WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
         }
         catch (OperationCanceledException)
@@ -44,7 +44,7 @@ public sealed class McpServerRunnerTests
     }
 
     /// <summary>
-    /// Verifies that <see cref="McpServerRunner.RunAsync(ModelContextProtocol.Server.McpServerPrimitiveCollection{ModelContextProtocol.Server.McpServerTool},Microsoft.Extensions.Logging.ILoggerFactory?,System.Threading.CancellationToken)"/> shuts down promptly
+    /// Verifies that <see cref="McpServerRunner.RunAsync(ModelContextProtocol.Server.McpServerPrimitiveCollection{ModelContextProtocol.Server.McpServerTool},System.Threading.CancellationToken)"/> shuts down promptly
     /// when the token is canceled shortly after launch.
     /// </summary>
     [TestMethod]
@@ -59,7 +59,7 @@ public sealed class McpServerRunnerTests
 
         try
         {
-            await runner.RunAsync(toolCollection, loggerFactory: null, cts.Token)
+            await runner.RunAsync(toolCollection, cts.Token)
                         .WaitAsync(timeoutToken);
         }
         catch (OperationCanceledException)

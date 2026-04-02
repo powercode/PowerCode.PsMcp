@@ -58,7 +58,6 @@ public sealed class McpServerSystemTests
             scriptBlockText: GetCurrentWeatherDefinition,
             callerScriptRoot: null,
             jsonDepth: 2,
-            loggerFactory: null,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -96,7 +95,6 @@ public sealed class McpServerSystemTests
             scriptBlockText: GetCurrentWeatherDefinition,
             callerScriptRoot: null,
             jsonDepth: 2,
-            loggerFactory: null,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -140,7 +138,6 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: null,
             jsonDepth: 2,
-            loggerFactory: null,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -186,7 +183,6 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: null,
             jsonDepth: 2,
-            loggerFactory: null,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -233,7 +229,6 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: commandConfig,
             jsonDepth: 2,
-            loggerFactory: null,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(

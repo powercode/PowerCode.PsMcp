@@ -25,6 +25,7 @@
     Filelist          = @(
         'PowerCode.PsMcp.psd1',
         'PowerCode.PsMcp.dll',
+        'Dependencies\PowerCode.PsMcp.Engine.dll',
         'Dependencies\System.Net.ServerSentEvents.dll',
         'Dependencies\System.Text.Encodings.Web.dll',
         'Dependencies\System.Diagnostics.DiagnosticSource.dll',
