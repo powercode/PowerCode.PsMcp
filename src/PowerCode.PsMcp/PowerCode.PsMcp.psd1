@@ -22,7 +22,13 @@
     AliasesToExport   = @()
     VariablesToExport = @()
 
-    Filelist          = @('PowerCode.PsMcp.dll', 'PowerCode.PsMcp.psd1', 'System.Net.ServerSentEvents.dll', 'System.Text.Encodings.Web.dll')
+    Filelist          = @(
+        'PowerCode.PsMcp.dll',
+        'PowerCode.PsMcp.psd1',
+        'System.Net.ServerSentEvents.dll',
+        'System.Text.Encodings.Web.dll'
+        'en-US\PowerCode.PsMcp.dll-Help.xml'
+    )
 
     PrivateData = @{
         PSData = @{

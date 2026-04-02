@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    Regenerates PowerCode.PsMcp.dll-Help.xml from the PlatyPS markdown source files whenever
+    any .md file in docs/powercode.psmcp/ is newer than the output XML.
+
+    Requires the Microsoft.PowerShell.PlatyPS module to be installed:
+      Install-Module Microsoft.PowerShell.PlatyPS
+  -->
+
+  <ItemGroup>
+    <MamlHelpSource Include="$(MSBuildThisFileDirectory)..\docs\powercode.psmcp\*.md" />
+  </ItemGroup>
+
+  <Target Name="GenerateMamlHelp"
+          AfterTargets="Build"
+          Inputs="@(MamlHelpSource)"
+          Outputs="$(OutputPath)en-US\PowerCode.PsMcp.dll-Help.xml">
+
+    <!-- Generate into obj/ so Export-MamlCommandHelp can create its subfolder freely. -->
+    <PropertyGroup>
+      <_MamlStagingDir>$(IntermediateOutputPath)maml-staging\</_MamlStagingDir>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(_MamlStagingDir);$(OutputPath)en-US" />
+
+    <Exec Command="pwsh -NoProfile -NonInteractive -Command &quot;Import-MarkdownCommandHelp -Path &apos;$(MSBuildThisFileDirectory)..\docs\powercode.psmcp\*.md&apos; | Export-MamlCommandHelp -Encoding utf8 -OutputFolder &apos;$(_MamlStagingDir)&apos;&quot;" />
+
+    <Move SourceFiles="$(_MamlStagingDir)powercode.psmcp\PowerCode.PsMcp.dll-Help.xml"
+          DestinationFiles="$(OutputPath)en-US\PowerCode.PsMcp.dll-Help.xml" />
+
+    <RemoveDir Directories="$(_MamlStagingDir)" />
+
+  </Target>
+
+</Project>
