@@ -3,6 +3,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="GitVersion.MsBuild" Version="6.7.0" />
     <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
     <PackageVersion Include="System.Management.Automation" Version="7.4.0" />
     <PackageVersion Include="Microsoft.PowerShell.SDK" Version="7.4.0" />

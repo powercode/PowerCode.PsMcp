@@ -1,4 +1,10 @@
 <Project>
+  <!-- GitVersion.MsBuild sets Version, AssemblyVersion, FileVersion and
+       InformationalVersion from git describe automatically during build. -->
+  <ItemGroup>
+    <PackageReference Include="GitVersion.MsBuild" PrivateAssets="All" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <LangVersion>preview</LangVersion>

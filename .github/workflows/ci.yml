@@ -37,6 +37,9 @@ jobs:
       - name: Restore
         run: dotnet restore -bl:artifacts/restore.binlog
 
+      - name: Restore Tools
+        run: dotnet tool restore
+
       - name: Build
         run: |
           pwsh -noprofile -nologo -command "Install-PSResource -Name:Microsoft.PowerShell.PlatyPS -Repository:PSGallery -TrustRepository"
