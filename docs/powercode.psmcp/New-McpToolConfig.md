@@ -21,7 +21,7 @@ Creates a per-command MCP tool configuration object for use with `Start-McpServe
 
 ```
 New-McpToolConfig [[-Name] <string>] [-Property <string[]>] [-ExcludeProperty <string[]>]
- [-Depth <int>] [<CommonParameters>]
+ [-Depth <int>] [-ParameterSets <string[]>] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -39,6 +39,7 @@ Use it to configure one or more of the following for a specific command:
 - Included output properties (`-Property`)
 - Excluded output properties (`-ExcludeProperty`)
 - Per-command JSON depth (`-Depth`)
+- Parameter-set filter for the input schema (`-ParameterSets`)
 
 The object returned by this cmdlet is intended to be placed in the hashtable passed to
 `Start-McpServer -CommandConfiguration`, where the hashtable key is the PowerShell command name.
@@ -73,6 +74,16 @@ Start-McpServer -Module MyModule -CommandConfiguration $commandConfiguration
 ```
 
 Maps PowerShell command names to per-command MCP tool configuration.
+
+### Example 4 - Restrict input schema to a single parameter set
+
+```powershell
+$cfg = New-McpToolConfig -Name 'get-proc-by-name' -ParameterSets 'NameParameterSet'
+```
+
+Filters the exposed input schema to only the parameters in `NameParameterSet`. Parameters that
+belong exclusively to other parameter sets are omitted from the schema. An error is raised at
+tool-creation time if the name does not match any parameter set declared by the command.
 
 ## PARAMETERS
 
@@ -142,6 +153,30 @@ HelpMessage: ''
 ### -Property
 
 Properties to include in tool output
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -ParameterSets
+
+One or more parameter-set names to filter the MCP input schema to. When specified, only
+parameters that belong to at least one of the named sets are included in the schema. A parameter
+that is mandatory in every named set is marked as required in the schema. An error is raised at
+tool-creation time if any supplied name does not match a parameter set declared by the command.
 
 ```yaml
 Type: System.String[]

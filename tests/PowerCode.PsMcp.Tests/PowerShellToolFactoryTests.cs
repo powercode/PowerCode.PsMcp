@@ -462,4 +462,57 @@ function Test-MultiSet {
             req.EnumerateArray().Any(),
             "Parameters that are mandatory in only one parameter set must not appear in 'required'.");
     }
+
+    // ── ParameterSets filtering ──────────────────────────────────────────────
+
+    [TestMethod]
+    public void Create_WithParameterSetFilter_OnlyIncludesParametersFromNamedSet()
+    {
+        DefineMultiSetFunction();
+
+        var tool = _factory.Create("Test-MultiSet", new McpToolConfig { ParameterSets = ["ByName"] });
+        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+
+        Assert.IsTrue(properties.TryGetProperty("Name", out _),
+            "Expected 'Name' in schema when filtering to ByName set.");
+        Assert.IsFalse(properties.TryGetProperty("Id", out _),
+            "Expected 'Id' to be absent when filtering to ByName set only.");
+    }
+
+    [TestMethod]
+    public void Create_WithParameterSetFilter_MandatoryParameterInFilteredSetIsRequired()
+    {
+        DefineMultiSetFunction();
+
+        var tool = _factory.Create("Test-MultiSet", new McpToolConfig { ParameterSets = ["ByName"] });
+        var required = tool.ProtocolTool.InputSchema.GetProperty("required")
+            .EnumerateArray()
+            .Select(e => e.GetString())
+            .ToList();
+
+        // When only ByName is active, Name is mandatory in every active set → required.
+        CollectionAssert.Contains(required, "Name");
+        CollectionAssert.DoesNotContain(required, "Id");
+    }
+
+    [TestMethod]
+    public void Create_WithMultipleParameterSetFilters_IncludesParametersFromAllNamedSets()
+    {
+        DefineMultiSetFunction();
+
+        var tool = _factory.Create("Test-MultiSet", new McpToolConfig { ParameterSets = ["ByName", "ById"] });
+        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+
+        Assert.IsTrue(properties.TryGetProperty("Name", out _));
+        Assert.IsTrue(properties.TryGetProperty("Id", out _));
+    }
+
+    [TestMethod]
+    public void Create_WithNonExistentParameterSet_ThrowsArgumentException()
+    {
+        DefineMultiSetFunction();
+
+        Assert.ThrowsExactly<ArgumentException>(() =>
+            _factory.Create("Test-MultiSet", new McpToolConfig { ParameterSets = ["DoesNotExist"] }));
+    }
 }

@@ -35,6 +35,14 @@ public sealed class NewMcpToolConfigCommand : PSCmdlet
     public int Depth { get; set; }
 
     /// <summary>
+    /// Gets or sets the parameter-set names used to filter the MCP input schema.
+    /// Only parameters that belong to at least one of the named sets are included.
+    /// An error is raised at tool-creation time if any name does not match a declared set.
+    /// </summary>
+    [Parameter(HelpMessage = "Parameter-set names to filter the input schema to")]
+    public string[]? ParameterSets { get; set; }
+
+    /// <summary>
     /// Writes the configured <see cref="McpToolConfig"/> instance to the pipeline.
     /// </summary>
     protected override void ProcessRecord()
@@ -48,7 +56,8 @@ public sealed class NewMcpToolConfigCommand : PSCmdlet
             Name = Name,
             Property = Property,
             ExcludeProperty = ExcludeProperty,
-            Depth = depth
+            Depth = depth,
+            ParameterSets = ParameterSets
         });
     }
 }

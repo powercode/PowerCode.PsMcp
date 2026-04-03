@@ -24,4 +24,12 @@ public sealed class McpToolConfig
     /// Gets the per-command JSON serialization depth override. When not set, the global depth is used.
     /// </summary>
     public int? Depth { get; init; }
+
+    /// <summary>
+    /// Gets the parameter-set names used to filter the MCP input schema.
+    /// When set, only parameters that belong to at least one of the named sets are included.
+    /// An <see cref="ArgumentException"/> is thrown at tool-creation time if any name does not
+    /// match a set declared by the command.
+    /// </summary>
+    public string[]? ParameterSets { get; init; }
 }

@@ -94,7 +94,8 @@ internal sealed class PowerShellToolFactory : IDisposable
         var helpInfo = GetHelpInfo(commandName);
         var syntax = GetCommandSyntax(commandName);
         var description = BuildDescription(helpInfo, syntax);
-        var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions);
+        var parameterSets = ResolveParameterSets(commandInfo, commandName, config?.ParameterSets);
+        var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions, parameterSets);
         var outputSchema = BuildOutputSchema(commandInfo);
         var toolName = config?.Name ?? commandName;
         var toolDepth = config?.Depth ?? _jsonDepth;
@@ -121,17 +122,49 @@ internal sealed class PowerShellToolFactory : IDisposable
     // ── Private helpers ──────────────────────────────────────────────────────
 
     /// <summary>
+    /// Validates <paramref name="requestedSets"/> against the command's declared parameter sets
+    /// and returns the matching <see cref="CommandParameterSetInfo"/> list.
+    /// Returns all parameter sets when <paramref name="requestedSets"/> is <see langword="null"/> or empty.
+    /// Throws <see cref="ArgumentException"/> for any name that does not exist on the command.
+    /// </summary>
+    private static IReadOnlyList<CommandParameterSetInfo> ResolveParameterSets(
+        CommandInfo commandInfo,
+        string commandName,
+        string[]? requestedSets)
+    {
+        if (requestedSets is null || requestedSets.Length == 0)
+            return commandInfo.ParameterSets;
+
+        var byName = commandInfo.ParameterSets
+            .ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
+
+        var result = new List<CommandParameterSetInfo>(requestedSets.Length);
+        foreach (var name in requestedSets)
+        {
+            if (!byName.TryGetValue(name, out var setInfo))
+                throw new ArgumentException(
+                    $"Command '{commandName}' does not have a parameter set named '{name}'. " +
+                    $"Available sets: {string.Join(", ", byName.Keys)}",
+                    nameof(requestedSets));
+            result.Add(setInfo);
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Builds the JSON input schema for a command, returning a minimal object schema
     /// when parameter metadata cannot be fully resolved.
     /// </summary>
     private static JsonElement BuildSafeInputSchema(
         CommandInfo commandInfo,
         string commandName,
-        IReadOnlyDictionary<string, string> parameterDescriptions)
+        IReadOnlyDictionary<string, string> parameterDescriptions,
+        IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
         try
         {
-            return BuildInputSchema(commandInfo, parameterDescriptions);
+            return BuildInputSchema(commandInfo, parameterDescriptions, parameterSets);
         }
         catch (Exception ex)
         {
@@ -326,33 +359,40 @@ internal sealed class PowerShellToolFactory : IDisposable
 
     private static JsonElement BuildInputSchema(
         CommandInfo commandInfo,
-        IReadOnlyDictionary<string, string> parameterDescriptions)
+        IReadOnlyDictionary<string, string> parameterDescriptions,
+        IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
         var properties = new Dictionary<string, object?>();
         var required = new List<string>();
+
+        // Build a set of parameter names that appear in at least one of the active parameter sets.
+        // When all sets are active this equals all parameters; when filtered it is a strict subset.
+        var allowedNames = new HashSet<string>(
+            parameterSets.SelectMany(s => s.Parameters.Select(p => p.Name)),
+            StringComparer.OrdinalIgnoreCase);
 
         foreach (var (paramName, paramMeta) in commandInfo.Parameters)
         {
             // Skip common/automatic parameters.
             if (CommonParameters.Contains(paramName))
-            {
                 continue;
-            }
 
             // Exclude security-sensitive parameter types.
             if (ExcludedTypes.Contains(paramMeta.ParameterType))
-            {
                 continue;
-            }
+
+            // When a parameter-set filter is active, skip parameters not in any of the chosen sets.
+            if (!allowedNames.Contains(paramName))
+                continue;
 
             parameterDescriptions.TryGetValue(paramName, out var helpDescription);
             var property = BuildPropertySchema(paramMeta, helpDescription);
             properties[paramName] = property;
 
-            // A parameter is required only when it is Mandatory in every parameter set.
-            // If there is any set in which the parameter is absent or optional, the caller
+            // A parameter is required only when it is Mandatory in every active parameter set
+            // that contains it. If it is absent from or optional in any active set, the caller
             // can omit it by choosing that set, so it must not be listed as required.
-            if (IsMandatoryInAllParameterSets(paramMeta, commandInfo.ParameterSets))
+            if (IsMandatoryInAllParameterSets(paramMeta, parameterSets))
             {
                 required.Add(paramName);
             }
@@ -382,7 +422,7 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// </summary>
     private static bool IsMandatoryInAllParameterSets(
         ParameterMetadata paramMeta,
-        System.Collections.ObjectModel.ReadOnlyCollection<CommandParameterSetInfo> allParameterSets)
+        IReadOnlyList<CommandParameterSetInfo> allParameterSets)
     {
         if (allParameterSets.Count == 0)
             return false;
