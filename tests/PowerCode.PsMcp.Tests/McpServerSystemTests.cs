@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using System.Text.Json;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -110,7 +111,17 @@ public sealed class McpServerSystemTests
 
         var content = result.Content.Count > 0 ? ((TextContentBlock)result.Content[0]).Text : "(no content)";
         Assert.AreNotEqual(true, result.IsError, $"Tool returned IsError=true. Content: {content}");
-        Assert.IsTrue(content.Contains("Seattle", StringComparison.Ordinal), $"Expected 'Seattle' in content: {content}");
+
+        // Actual output objects land in StructuredContent; text content is ToString() fallback.
+        Assert.IsNotNull(result.StructuredContent, "Expected structured content from tool output.");
+        var items = result.StructuredContent.Value.GetProperty("items");
+        Assert.AreEqual(JsonValueKind.Array, items.ValueKind);
+        Assert.IsGreaterThan(0, items.GetArrayLength(), "Expected at least one item in structured output.");
+
+        var item = items[0];
+        Assert.AreEqual("Seattle",
+            item.GetProperty("Location").GetString(),
+            $"Expected 'Seattle' in structured Location property. Full items: {items}");
 
         await cts.CancelAsync();
         try { await serverTask; } catch (OperationCanceledException) { }

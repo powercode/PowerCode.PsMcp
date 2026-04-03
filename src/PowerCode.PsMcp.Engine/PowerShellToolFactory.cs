@@ -233,7 +233,7 @@ internal sealed class PowerShellToolFactory : IDisposable
         {
             using var ps = PowerShell.Create();
             ps.Runspace = _runspace;
-            ps.AddCommand("Get-Help").AddParameter("Name", commandName);
+            ps.AddCommand("Get-Help").AddParameter("Name", commandName).AddParameter("ProgressAction", ActionPreference.Ignore);
 
             var results = ps.Invoke();
             var helpObject = results.FirstOrDefault();
@@ -416,17 +416,32 @@ internal sealed class PowerShellToolFactory : IDisposable
         if (allParameterSets.Count == 0)
             return false;
 
+        // The "__AllParameterSets" sentinel is only stored for parameters declared without an
+        // explicit ParameterSetName (i.e. they truly belong to every set). Parameters with at
+        // least one explicit set entry must NOT fall back to the sentinel for sets they are not
+        // in — doing so would incorrectly mark them as required in all sets.
+        bool hasExplicitSets = paramMeta.ParameterSets
+            .Keys.Any(k => !string.Equals(k, ParameterAttribute.AllParameterSets, StringComparison.OrdinalIgnoreCase));
+
         foreach (var parameterSet in allParameterSets)
         {
-            // Use ParameterMetadata.ParameterSets (keyed by set name) which is reliably
-            // populated for both compiled cmdlets and script functions. Fall back to the
-            // "__AllParameterSets" sentinel for parameters declared without an explicit set.
-            if (!paramMeta.ParameterSets.TryGetValue(parameterSet.Name, out var setMeta) &&
-                !paramMeta.ParameterSets.TryGetValue(ParameterAttribute.AllParameterSets, out setMeta))
-                return false; // parameter not present in this set → can be omitted via this set
-
-            if (!setMeta.IsMandatory)
+            if (paramMeta.ParameterSets.TryGetValue(parameterSet.Name, out var setMeta))
+            {
+                if (!setMeta.IsMandatory)
+                    return false;
+            }
+            else if (!hasExplicitSets &&
+                     paramMeta.ParameterSets.TryGetValue(ParameterAttribute.AllParameterSets, out var allSetMeta))
+            {
+                // Parameter declared for all sets — use the sentinel entry's mandatory flag.
+                if (!allSetMeta.IsMandatory)
+                    return false;
+            }
+            else
+            {
+                // Not present in this set → caller can pick this set and omit the parameter.
                 return false;
+            }
         }
 
         return true;

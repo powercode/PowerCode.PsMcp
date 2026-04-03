@@ -230,16 +230,14 @@ internal sealed class PowerShellTool : McpServerTool
         if (serializerInput.Count > 0 || _protocolTool.OutputSchema is not null)
         {
             using var serializerPs = CreateSerializerPs();
-            structuredContent = ConvertToJsonEnvelope(serializerPs, serializerInput);
-            if (serializerInput.Count > 0)
-            {
-                textLines.Add(structuredContent.Value.GetRawText());
-            }
+            structuredContent = ConvertToJsonEnvelope(serializerPs, serializerInput);            
         }
 
         var textContent = textLines.Count > 0
             ? string.Join(Environment.NewLine, textLines)
-            : "(no output)";
+            : serializerInput.Count > 0
+                ? string.Join(Environment.NewLine, serializerInput.Select(o => o.ToString()))
+                : "(no output)";
 
         return new CallToolResult
         {

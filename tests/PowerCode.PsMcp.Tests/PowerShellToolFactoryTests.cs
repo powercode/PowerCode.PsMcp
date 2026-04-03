@@ -149,6 +149,37 @@ public sealed class PowerShellToolFactoryTests : IDisposable
             "'required' must be absent or empty.");
     }
 
+    [TestMethod]
+    public void Create_ScriptFunctionWithSeparateParameterSets_NeitherMandatoryParamIsRequired()
+    {
+        // Regression test: ParameterMetadata.ParameterSets for script-function parameters
+        // may include an "__AllParameterSets" entry in addition to the explicit set entry.
+        // The __AllParameterSets fallback must not be used for sets the parameter is not
+        // explicitly part of, or every mandatory param would incorrectly appear required.
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Get-ProcessFileVersion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
+        [string[]] $Name,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Id')]
+        [int[]] $Id
+    )
+}");
+        ps.Invoke();
+
+        var tool = _factory.Create("Get-ProcessFileVersion");
+
+        var hasRequired = tool.ProtocolTool.InputSchema.TryGetProperty("required", out var req) &&
+                          req.EnumerateArray().Any();
+
+        Assert.IsFalse(hasRequired,
+            "Neither Name nor Id is mandatory in every parameter set of a script function; " +
+            "'required' must be absent or empty.");
+    }
+
     // ── Invalid command ──────────────────────────────────────────────────────
 
     [TestMethod]
