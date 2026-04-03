@@ -515,4 +515,65 @@ function Test-MultiSet {
         Assert.ThrowsExactly<ArgumentException>(() =>
             _factory.Create("Test-MultiSet", new McpToolConfig { ParameterSets = ["DoesNotExist"] }));
     }
+
+    // ── Get-Process with real parameter sets (integration scenario) ──────────
+    //
+    // Mirrors the user-facing pattern:
+    //   Start-McpServer -Module Microsoft.PowerShell.Management -Include Get-Process
+    //     -CommandConfiguration @{
+    //       'Get-Process' = New-McpToolConfig -Name 'process'
+    //           -Property Id, Name, CPU, StartTime, Path, CommandLine
+    //           -Depth 1 -ParameterSets Name, Id
+    //     }
+
+    [TestMethod]
+    public void Create_GetProcessWithNameAndIdSets_OnlyNameAndIdParametersInSchema()
+    {
+        var config = new McpToolConfig
+        {
+            Name = "process",
+            Property = ["Id", "Name", "CPU", "StartTime", "Path", "CommandLine"],
+            Depth = 1,
+            ParameterSets = ["Name", "Id"]
+        };
+
+        var tool = _factory.Create("Get-Process", config);
+
+        Assert.AreEqual("process", tool.ProtocolTool.Name);
+
+        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+
+        // Name and Id belong to the filtered sets – both must be present.
+        Assert.IsTrue(properties.TryGetProperty("Name", out _),
+            "Expected 'Name' in schema.");
+        Assert.IsTrue(properties.TryGetProperty("Id", out _),
+            "Expected 'Id' in schema.");
+
+        // InputObject is exclusive to the InputObject/InputObjectWithUserName sets – must be absent.
+        Assert.IsFalse(properties.TryGetProperty("InputObject", out _),
+            "Expected 'InputObject' to be absent when filtered to Name and Id sets.");
+
+        // IncludeUserName is exclusive to the *WithUserName sets – must be absent.
+        Assert.IsFalse(properties.TryGetProperty("IncludeUserName", out _),
+            "Expected 'IncludeUserName' to be absent when filtered to Name and Id sets.");
+    }
+
+    [TestMethod]
+    public void Create_GetProcessWithNameAndIdSets_NeitherNameNorIdIsRequired()
+    {
+        // Name is mandatory only in the Name set; Id only in the Id set.
+        // Neither is mandatory in every active set, so neither should be required.
+        var config = new McpToolConfig
+        {
+            ParameterSets = ["Name", "Id"]
+        };
+
+        var tool = _factory.Create("Get-Process", config);
+
+        var hasRequired = tool.ProtocolTool.InputSchema.TryGetProperty("required", out var req) &&
+                          req.EnumerateArray().Any();
+
+        Assert.IsFalse(hasRequired,
+            "Neither Name nor Id is mandatory in every active set – required array must be absent.");
+    }
 }

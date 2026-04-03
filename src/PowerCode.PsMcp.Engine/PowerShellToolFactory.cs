@@ -92,9 +92,9 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         var commandInfo = GetCommandInfo(commandName);
         var helpInfo = GetHelpInfo(commandName);
-        var syntax = GetCommandSyntax(commandName);
-        var description = BuildDescription(helpInfo, syntax);
         var parameterSets = ResolveParameterSets(commandInfo, commandName, config?.ParameterSets);
+        var syntax = BuildSyntax(commandName, parameterSets);
+        var description = BuildDescription(helpInfo, syntax);
         var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions, parameterSets);
         var outputSchema = BuildOutputSchema(commandInfo);
         var toolName = config?.Name ?? commandName;
@@ -193,29 +193,18 @@ internal sealed class PowerShellToolFactory : IDisposable
     }
 
     /// <summary>
-    /// Returns the parameter-set syntax for <paramref name="commandName"/> by invoking
-    /// <c>Get-Command -Name &lt;name&gt; -Syntax</c>.
-    /// Using <c>-Syntax</c> is necessary because <c>CommandInfo.Definition</c> returns the
-    /// script-block body for functions rather than the parameter set syntax.
-    /// Returns an empty string on any failure.
+    /// Builds the syntax block for the tool description from the active <paramref name="parameterSets"/>.
+    /// Each <see cref="CommandParameterSetInfo"/> is formatted as
+    /// <c>"{commandName} {parameterSetInfo}"</c>, matching the output of
+    /// <c>Get-Command -Syntax</c> but restricted to the sets actually exposed by the tool.
     /// </summary>
-    private string GetCommandSyntax(string commandName)
+    private static string BuildSyntax(string commandName, IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
-        try
-        {
-            using var ps = PowerShell.Create();
-            ps.Runspace = _runspace;
-            ps.AddCommand("Get-Command")
-              .AddParameter("Name", commandName)
-              .AddParameter("Syntax");
-
-            var results = ps.Invoke<string>();
-            return string.Join(Environment.NewLine, results.Select(s => s.Trim()).Where(s => s.Length > 0));
-        }
-        catch
-        {
+        if (parameterSets.Count == 0)
             return string.Empty;
-        }
+
+        return string.Join(Environment.NewLine,
+            parameterSets.Select(s => $"{commandName} {s}".TrimEnd()));
     }
 
     /// <summary>
