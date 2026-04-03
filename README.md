@@ -113,6 +113,108 @@ The server communicates over **stdio**. Point your MCP client at the `pwsh` exec
 }
 ```
 
+## Real-world example: process information tools
+
+This example wires up two MCP tools that expose process information.
+It uses a dedicated script file so the configuration stays out of `mcp.json`.
+
+### 1. `mcp.json`
+
+Place this file in your workspace's `.vscode/` directory (or wherever your MCP client expects it).
+
+```json
+{
+  "servers": {
+    "processes": {
+      "type": "stdio",
+      "command": "pwsh",
+      "args": [
+        "-noprofile",
+        "-noni",
+        "-file",
+        "${workspaceFolder}/tools/pwsh-mcp/Proc.ps1"
+      ]
+    }
+  }
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `"type": "stdio"` | The server communicates over standard input/output — required for `Start-McpServer`. |
+| `"command": "pwsh"` | Launch PowerShell 7. |
+| `"-noprofile"` / `"-noni"` | Skip the user profile and disable interactive prompts for a clean, fast startup. |
+| `"-file"` | Run the given `.ps1` file instead of inline `-Command` text to keep `mcp.json` simple and allow complex configuration in a real file. |
+| `"${workspaceFolder}/…/Proc.ps1"` | Path resolved by the MCP client; put the script anywhere that suits your project layout. |
+
+### 2. `Proc.ps1`
+
+```powershell
+#Requires -Module PowerCode.PsMcp
+
+Start-McpServer -Module Microsoft.PowerShell.Management -Include Get-Process -CommandConfiguration @{
+    'Get-Process'      = New-McpToolConfig -Name 'process' -Property Id, Name, CPU, StartTime, Path, CommandLine, FileVersionInfo -Depth 1 -ParameterSets Name, Id
+    'processFileVersion' = New-McpToolConfig -Depth 1 -Property CompanyName, FileName, FileVersion, ProductVersion
+} -ScriptBlock {
+    function processFileVersion {
+        <#
+        .SYNOPSIS
+        Gets the file version information for one or more processes. Specify the process by name or process ID (PID).
+        .PARAMETER Name
+        The name of the process(es) to get the file version information for.
+        .PARAMETER Id
+        The ID of the process(es) to get the file version information for.
+        #>
+        [OutputType([System.Diagnostics.FileVersionInfo])]
+        param(
+            [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
+            [string[]] $Name
+            ,
+            [Parameter(Mandatory = $true, ParameterSetName = 'Id')]
+            [Int[]] $Id
+        )
+
+        Get-Process -FileVersionInfo @PSBoundParameters
+    }
+}
+```
+
+#### `#Requires -Module PowerCode.PsMcp`
+
+Ensures the module is available before the script body runs. If you installed from source, make sure `Import-Module` has been called for the current session or that the module directory is on `$env:PSModulePath`.
+
+#### `-Module Microsoft.PowerShell.Management -Include Get-Process`
+
+Imports `Microsoft.PowerShell.Management` into the server's runspace, then restricts the discovered command set to only `Get-Process`. Without `-Include` every command introduced by the module would become a tool.
+
+#### `-CommandConfiguration`
+
+A hashtable that customises individual tools.
+
+**Key `'Get-Process'`** — controls the tool built from the built-in `Get-Process` command:
+
+| `New-McpToolConfig` argument | Effect |
+|------------------------------|--------|
+| `-Name 'process'` | Renames the MCP tool from `Get-Process` to `process`. |
+| `-Property Id, Name, CPU, StartTime, Path, CommandLine, FileVersionInfo` | Output is piped through `Select-Object` with these properties, keeping tool responses small and predictable. |
+| `-Depth 1` | JSON serialisation is limited to one level for this tool, overriding the global default. |
+| `-ParameterSets Name, Id` | Only parameters that belong to the `Name` or `Id` parameter sets are included in the tool's input schema sent to the AI client — common parameters like `-ErrorAction` are hidden. |
+
+**Key `'processFileVersion'`** — controls the tool built from the custom `processFileVersion` function defined in `-ScriptBlock`:
+
+| `New-McpToolConfig` argument | Effect |
+|------------------------------|--------|
+| `-Depth 1` | Serialise `FileVersionInfo` objects one level deep. |
+| `-Property CompanyName, FileName, FileVersion, ProductVersion` | Surface only the four most useful fields instead of the full `FileVersionInfo` property bag. |
+
+#### `-ScriptBlock { function processFileVersion { … } }`
+
+The script block is invoked inside the server's runspace before tool discovery runs. Any functions it defines become candidates for MCP tools. Here `processFileVersion` wraps `Get-Process -FileVersionInfo @PSBoundParameters` — splatting `$PSBoundParameters` forwards whichever parameter set the caller used (`-Name` or `-Id`) directly to `Get-Process`.
+
+The function's **comment-based help** (`.SYNOPSIS`, `.PARAMETER`) is extracted via `Get-Help` at startup and becomes the tool description and per-parameter descriptions in the schema that the AI client sees. Well-written help therefore directly improves how accurately an AI agent invokes your tools.
+
+`[OutputType([System.Diagnostics.FileVersionInfo])]` is optional metadata; it does not affect runtime behaviour but documents intent.
+
 ## Parameters
 
 | Parameter | Type | Description |
