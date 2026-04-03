@@ -130,6 +130,25 @@ public sealed class PowerShellToolFactoryTests : IDisposable
         }
     }
 
+    // ── Required parameters ───────────────────────────────────────────────────
+
+    [TestMethod]
+    public void Create_WithGetProcess_NoParametersAreRequired()
+    {
+        // Get-Process has three separate parameter sets (Name, Id, InputObject). Each
+        // mandatory parameter is mandatory in only one set, so none is globally required.
+        // Regression test: the old Attributes-based implementation incorrectly marked
+        // Id and InputObject as required for compiled cmdlets.
+        var tool = _factory.Create("Get-Process");
+
+        var hasRequired = tool.ProtocolTool.InputSchema.TryGetProperty("required", out var req) &&
+                          req.EnumerateArray().Any();
+
+        Assert.IsFalse(hasRequired,
+            "No Get-Process parameter is mandatory in every parameter set; " +
+            "'required' must be absent or empty.");
+    }
+
     // ── Invalid command ──────────────────────────────────────────────────────
 
     [TestMethod]

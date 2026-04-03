@@ -416,20 +416,16 @@ internal sealed class PowerShellToolFactory : IDisposable
         if (allParameterSets.Count == 0)
             return false;
 
-        var paramAttrs = paramMeta.Attributes.OfType<ParameterAttribute>().ToList();
-        if (paramAttrs.Count == 0)
-            return false;
-
         foreach (var parameterSet in allParameterSets)
         {
-            // Find the [Parameter] attribute that covers this parameter set, either by
-            // explicit name or via the catch-all "__AllParameterSets" sentinel.
-            var attrForSet = paramAttrs.FirstOrDefault(a =>
-                a.ParameterSetName == parameterSet.Name ||
-                a.ParameterSetName == ParameterAttribute.AllParameterSets);
+            // Use ParameterMetadata.ParameterSets (keyed by set name) which is reliably
+            // populated for both compiled cmdlets and script functions. Fall back to the
+            // "__AllParameterSets" sentinel for parameters declared without an explicit set.
+            if (!paramMeta.ParameterSets.TryGetValue(parameterSet.Name, out var setMeta) &&
+                !paramMeta.ParameterSets.TryGetValue(ParameterAttribute.AllParameterSets, out setMeta))
+                return false; // parameter not present in this set → can be omitted via this set
 
-            // Absent from this set, or present but not mandatory → not globally required.
-            if (attrForSet is null || !attrForSet.Mandatory)
+            if (!setMeta.IsMandatory)
                 return false;
         }
 
