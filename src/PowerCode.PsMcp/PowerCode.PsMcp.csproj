@@ -1,4 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Force all NuGet lock-file assemblies to be copied to output on every
+         platform. Without this, the .NET SDK marks many Microsoft.Extensions.*
+         and System.* packages as framework-provided on Linux and omits them,
+         leaving the Dependencies folder empty of third-party DLLs. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\PowerCode.PsMcp.Engine\PowerCode.PsMcp.Engine.csproj" />
     <!--

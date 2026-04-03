@@ -53,6 +53,15 @@ if ($PSCmdlet.ShouldProcess($ManifestPath, 'Update module manifest version')) {
 
     Write-Host 'Manifest updated successfully.'
 
+    # Rebuild the FileList from the actual files present in the module directory
+    # so that inbox .NET assemblies omitted on some platforms do not cause
+    # Test-ModuleManifest to fail with "invalid FileList entry".
+    $ModuleDir = Resolve-Path -Path $ModulePath
+    $FileList  = Get-ChildItem -Path $ModuleDir -Recurse -File |
+        ForEach-Object { $_.FullName.Substring($ModuleDir.Path.Length).TrimStart([IO.Path]::DirectorySeparatorChar, '/').Replace('\', '/') } |
+        Sort-Object
+    Update-ModuleManifest -Path $ManifestPath -FileList $FileList
+
     # Set Prerelease via Update-ModuleManifest after the version is patched.
     if ($Prerelease) {
         Update-ModuleManifest -Path $ManifestPath -Prerelease $Prerelease
