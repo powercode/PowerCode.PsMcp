@@ -404,4 +404,62 @@ function Test-IntOutput {
         Assert.AreEqual("string", dateTimeSchema.GetProperty("type").GetString());
         Assert.AreEqual("date-time", dateTimeSchema.GetProperty("format").GetString());
     }
+
+    // ── Multiple parameter sets ──────────────────────────────────────────────
+
+    // Defines Test-MultiSet with two parameter sets:
+    //   ByName  – mandatory -Name  (string), optional -Verbose
+    //   ById    – mandatory -Id    (int),    optional -Verbose
+    private void DefineMultiSetFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-MultiSet {
+    <#
+    .SYNOPSIS
+        A command with two parameter sets.
+    #>
+    [CmdletBinding(DefaultParameterSetName = 'ByName')]
+    param(
+        [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
+        [int]$Id
+    )
+}");
+        ps.Invoke();
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_DescriptionContainsAllSyntaxLines()
+    {
+        DefineMultiSetFunction();
+
+        var tool = _factory.Create("Test-MultiSet");
+        var description = tool.ProtocolTool.Description;
+
+        Assert.IsNotNull(description);
+        // Both parameter-set syntax lines must appear.
+        Assert.Contains("-Name", description,
+            "Expected syntax for the ByName parameter set in the description.");
+        Assert.Contains("-Id", description,
+            "Expected syntax for the ById parameter set in the description.");
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_ParameterMandatoryInOnlyOneSetIsNotRequired()
+    {
+        DefineMultiSetFunction();
+
+        var tool = _factory.Create("Test-MultiSet");
+
+        // Neither Name nor Id is mandatory in every set, so the required array must be absent
+        // (or empty) – each is only required when the caller picks that set.
+        Assert.IsFalse(
+            tool.ProtocolTool.InputSchema.TryGetProperty("required", out var req) &&
+            req.EnumerateArray().Any(),
+            "Parameters that are mandatory in only one parameter set must not appear in 'required'.");
+    }
 }

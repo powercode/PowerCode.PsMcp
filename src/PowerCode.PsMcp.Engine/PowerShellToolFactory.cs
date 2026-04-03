@@ -177,7 +177,7 @@ internal sealed class PowerShellToolFactory : IDisposable
               .AddParameter("Syntax");
 
             var results = ps.Invoke<string>();
-            return results.FirstOrDefault()?.Trim() ?? string.Empty;
+            return string.Join(Environment.NewLine, results.Select(s => s.Trim()).Where(s => s.Length > 0));
         }
         catch
         {
@@ -349,8 +349,10 @@ internal sealed class PowerShellToolFactory : IDisposable
             var property = BuildPropertySchema(paramMeta, helpDescription);
             properties[paramName] = property;
 
-            // A parameter is required if it is Mandatory in any parameter set.
-            if (paramMeta.Attributes.OfType<ParameterAttribute>().Any(p => p.Mandatory))
+            // A parameter is required only when it is Mandatory in every parameter set.
+            // If there is any set in which the parameter is absent or optional, the caller
+            // can omit it by choosing that set, so it must not be listed as required.
+            if (IsMandatoryInAllParameterSets(paramMeta, commandInfo.ParameterSets))
             {
                 required.Add(paramName);
             }
@@ -370,6 +372,39 @@ internal sealed class PowerShellToolFactory : IDisposable
         var json = JsonSerializer.Serialize(schema);
         using var doc = JsonDocument.Parse(json);
         return doc.RootElement.Clone();
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="paramMeta"/> is mandatory in
+    /// every parameter set in <paramref name="allParameterSets"/>.
+    /// A parameter that is absent from, or optional in, any set can always be omitted by
+    /// choosing that set, so it must not be marked as globally required.
+    /// </summary>
+    private static bool IsMandatoryInAllParameterSets(
+        ParameterMetadata paramMeta,
+        System.Collections.ObjectModel.ReadOnlyCollection<CommandParameterSetInfo> allParameterSets)
+    {
+        if (allParameterSets.Count == 0)
+            return false;
+
+        var paramAttrs = paramMeta.Attributes.OfType<ParameterAttribute>().ToList();
+        if (paramAttrs.Count == 0)
+            return false;
+
+        foreach (var parameterSet in allParameterSets)
+        {
+            // Find the [Parameter] attribute that covers this parameter set, either by
+            // explicit name or via the catch-all "__AllParameterSets" sentinel.
+            var attrForSet = paramAttrs.FirstOrDefault(a =>
+                a.ParameterSetName == parameterSet.Name ||
+                a.ParameterSetName == ParameterAttribute.AllParameterSets);
+
+            // Absent from this set, or present but not mandatory → not globally required.
+            if (attrForSet is null || !attrForSet.Mandatory)
+                return false;
+        }
+
+        return true;
     }
 
     private static Dictionary<string, object?> BuildPropertySchema(
