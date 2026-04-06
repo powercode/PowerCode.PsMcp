@@ -171,6 +171,29 @@ public sealed class PowerShellToolTests : IDisposable
         Assert.DoesNotContain("A parameter cannot be found that matches parameter name", text);
     }
 
+    [TestMethod]
+    public async Task InvokeAsync_WithParameterSetNameArgument_StructuredContentIncludesParameterSetName()
+    {
+        DefineMultiSetEchoFunction();
+
+        var tool = _factory.Create("Test-MultiSetEcho");
+        var args = new Dictionary<string, JsonElement>
+        {
+            ["ParameterSetName"] = JsonSerializer.SerializeToElement("ByName"),
+            ["Name"] = JsonSerializer.SerializeToElement("test-value")
+        };
+        var ctx = BuildContext(tool, args);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsNotNull(result.StructuredContent);
+        Assert.AreEqual("ByName", result.StructuredContent.Value.GetProperty("ParameterSetName").GetString());
+
+        var items = result.StructuredContent.Value.GetProperty("items");
+        Assert.AreEqual(JsonValueKind.Array, items.ValueKind);
+        Assert.AreEqual("ByName:test-value", items[0].GetString());
+    }
+
     // ── Structured content envelope ───────────────────────────────────────────
 
     [TestMethod]

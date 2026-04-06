@@ -54,6 +54,8 @@ internal sealed class PowerShellToolFactory : IDisposable
         typeof(System.Security.SecureString)
     ];
 
+    private static readonly string[] OutputVariantRequiredProperties = ["ParameterSetName", "items"];
+
     /// <summary>
     /// Initialises a new factory backed by <paramref name="runspace"/>.
     /// </summary>
@@ -96,7 +98,7 @@ internal sealed class PowerShellToolFactory : IDisposable
         var syntax = BuildSyntax(commandName, parameterSets);
         var description = BuildDescription(helpInfo, syntax);
         var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions, parameterSets);
-        var outputSchema = BuildOutputSchema(commandInfo);
+        var outputSchema = BuildOutputSchema(commandInfo, parameterSets);
         var toolName = config?.Name ?? commandName;
         var toolDepth = config?.Depth ?? _jsonDepth;
 
@@ -570,16 +572,103 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// semantics where commands write zero or more objects to the pipeline.
     /// Returns <see langword="null"/> when no output types are declared.
     /// </summary>
-    private JsonElement? BuildOutputSchema(CommandInfo commandInfo)
+    private JsonElement? BuildOutputSchema(
+        CommandInfo commandInfo,
+        IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
         if (commandInfo.OutputType.Count == 0)
             return null;
 
-        // The last declared output type is the default/primary case in PowerShell
-        // convention. Earlier entries typically map to specific parameter sets.
-        var primaryType = commandInfo.OutputType[commandInfo.OutputType.Count - 1];
-        object itemSchema = BuildItemSchema(primaryType.Type);
+        var perSetTypes = ResolvePerSetOutputTypes(commandInfo);
 
+        if (perSetTypes is not null && parameterSets.Count > 1)
+        {
+            var mappedSetCount = 0;
+            PSTypeName[]? singleMappedSetTypes = null;
+
+            foreach (var parameterSet in parameterSets)
+            {
+                if (perSetTypes.TryGetValue(parameterSet.Name, out var setTypes)
+                    || perSetTypes.TryGetValue(ParameterAttribute.AllParameterSets, out setTypes))
+                {
+                    mappedSetCount++;
+                    singleMappedSetTypes = setTypes;
+                }
+            }
+
+            if (mappedSetCount > 1)
+                return BuildOneOfOutputSchema(perSetTypes, parameterSets);
+
+            if (mappedSetCount == 1 && singleMappedSetTypes is not null)
+            {
+                return BuildFlatOutputSchema(
+                    BuildArrayItemsSchema(singleMappedSetTypes.Select(static t => t.Type).ToArray()));
+            }
+        }
+
+        if (perSetTypes is not null && parameterSets.Count == 1)
+        {
+            var setName = parameterSets[0].Name;
+            if (perSetTypes.TryGetValue(setName, out var setTypes)
+                || perSetTypes.TryGetValue(ParameterAttribute.AllParameterSets, out setTypes))
+            {
+                return BuildFlatOutputSchema(
+                    BuildArrayItemsSchema(setTypes.Select(static t => t.Type).ToArray()));
+            }
+        }
+
+        var outputTypes = commandInfo.OutputType
+            .Select(static outputType => outputType.Type)
+            .ToArray();
+
+        return BuildFlatOutputSchema(BuildArrayItemsSchema(outputTypes));
+    }
+
+    private JsonElement BuildOneOfOutputSchema(
+        Dictionary<string, PSTypeName[]> perSetTypes,
+        IReadOnlyList<CommandParameterSetInfo> parameterSets)
+    {
+        var variants = new List<Dictionary<string, object?>>();
+
+        foreach (var parameterSet in parameterSets)
+        {
+            if (!perSetTypes.TryGetValue(parameterSet.Name, out var setTypes)
+                && !perSetTypes.TryGetValue(ParameterAttribute.AllParameterSets, out setTypes))
+            {
+                continue;
+            }
+
+            variants.Add(new Dictionary<string, object?>
+            {
+                ["type"] = "object",
+                ["properties"] = new Dictionary<string, object?>
+                {
+                    ["ParameterSetName"] = new Dictionary<string, object?>
+                    {
+                        ["type"] = "string",
+                        ["const"] = parameterSet.Name
+                    },
+                    ["items"] = new Dictionary<string, object?>
+                    {
+                        ["type"] = "array",
+                        ["items"] = BuildArrayItemsSchema(setTypes.Select(static typeName => typeName.Type).ToArray())
+                    }
+                },
+                ["required"] = OutputVariantRequiredProperties
+            });
+        }
+
+        var schema = new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["oneOf"] = variants
+        };
+
+        return JsonSerializer.SerializeToElement(schema);
+    }
+
+    private static JsonElement BuildFlatOutputSchema(object itemsSchema)
+    {
         var schema = new Dictionary<string, object?>
         {
             ["type"] = "object",
@@ -588,12 +677,77 @@ internal sealed class PowerShellToolFactory : IDisposable
                 ["items"] = new Dictionary<string, object?>
                 {
                     ["type"] = "array",
-                    ["items"] = itemSchema
+                    ["items"] = itemsSchema
                 }
             }
         };
 
         return JsonSerializer.SerializeToElement(schema);
+    }
+
+    private object BuildArrayItemsSchema(IReadOnlyList<Type?> types)
+    {
+        var itemSchemas = types
+            .Select(BuildItemSchema)
+            .Cast<object>()
+            .ToArray();
+
+        if (itemSchemas.Length == 1)
+            return itemSchemas[0];
+
+        return new Dictionary<string, object?>
+        {
+            ["oneOf"] = itemSchemas
+        };
+    }
+
+    private static Dictionary<string, PSTypeName[]>? ResolvePerSetOutputTypes(CommandInfo commandInfo)
+    {
+        IEnumerable<OutputTypeAttribute> outputTypeAttributes = commandInfo switch
+        {
+            FunctionInfo functionInfo => functionInfo.ScriptBlock.Attributes.OfType<OutputTypeAttribute>(),
+            CmdletInfo cmdletInfo => cmdletInfo.ImplementingType.GetCustomAttributes<OutputTypeAttribute>(inherit: true),
+            _ => []
+        };
+
+        var attributes = outputTypeAttributes.ToArray();
+        if (attributes.Length == 0)
+            return null;
+
+        var bySet = new Dictionary<string, List<PSTypeName>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var outputTypeAttribute in attributes)
+        {
+            var setNames = outputTypeAttribute.ParameterSetName is { Length: > 0 }
+                ? outputTypeAttribute.ParameterSetName
+                : [ParameterAttribute.AllParameterSets];
+
+            foreach (var setName in setNames)
+            {
+                var key = string.IsNullOrWhiteSpace(setName)
+                    ? ParameterAttribute.AllParameterSets
+                    : setName;
+
+                if (!bySet.TryGetValue(key, out var typeNames))
+                {
+                    typeNames = [];
+                    bySet[key] = typeNames;
+                }
+
+                typeNames.AddRange(outputTypeAttribute.Type);
+            }
+        }
+
+        if (bySet.Count == 0)
+            return null;
+
+        var hasNonAllParameterSet = bySet.Keys.Any(
+            key => !string.Equals(key, ParameterAttribute.AllParameterSets, StringComparison.OrdinalIgnoreCase));
+
+        if (!hasNonAllParameterSet)
+            return null;
+
+        return bySet.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

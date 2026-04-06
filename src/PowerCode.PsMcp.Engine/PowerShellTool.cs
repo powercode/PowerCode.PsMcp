@@ -175,7 +175,7 @@ internal sealed class PowerShellTool : McpServerTool
 
         using var commandPs = PowerShell.Create();
         commandPs.Runspace = _runspace;
-        ConfigurePipelineCommand(commandPs, request.Params?.Arguments);
+        var parameterSetName = ConfigurePipelineCommand(commandPs, request.Params?.Arguments);
         
         try
         {
@@ -189,7 +189,7 @@ internal sealed class PowerShellTool : McpServerTool
         }
 
         serializerInput.Complete();
-        return BuildResult(serializerInput, classifier.TextLines, classifier.HasErrors);
+        return BuildResult(serializerInput, classifier.TextLines, classifier.HasErrors, parameterSetName);
     }
 
     /// <summary>Creates a configured serializer pipeline (Select-Object + ConvertTo-Json).</summary>
@@ -221,7 +221,8 @@ internal sealed class PowerShellTool : McpServerTool
     private CallToolResult BuildResult(
         PSDataCollection<PSObject> serializerInput,
         List<string> textLines,
-        bool hasErrors)
+        bool hasErrors,
+        string? parameterSetName)
     {
         // Produce structured JSON in an {"items": [...]} envelope matching pipeline semantics.
         // When outputSchema is defined, always include structuredContent (even for empty pipelines).
@@ -230,7 +231,7 @@ internal sealed class PowerShellTool : McpServerTool
         if (serializerInput.Count > 0 || _protocolTool.OutputSchema is not null)
         {
             using var serializerPs = CreateSerializerPs();
-            structuredContent = ConvertToJsonEnvelope(serializerPs, serializerInput);            
+            structuredContent = ConvertToJsonEnvelope(serializerPs, serializerInput, parameterSetName);
         }
 
         var textContent = textLines.Count > 0
@@ -253,9 +254,11 @@ internal sealed class PowerShellTool : McpServerTool
     /// Adds <see cref="_commandName"/> to <paramref name="ps"/>, binds all MCP
     /// arguments, and redirects all output streams into the success stream (<c>*&gt;&amp;1</c>).
     /// </summary>
-    private void ConfigurePipelineCommand(PowerShell ps, IDictionary<string, JsonElement>? arguments)
+    private string? ConfigurePipelineCommand(PowerShell ps, IDictionary<string, JsonElement>? arguments)
     {
         ps.AddCommand(_commandName);
+
+        string? parameterSetName = null;
 
         // Map MCP JSON arguments to .NET types that PowerShell understands.
         if (arguments is { Count: > 0 })
@@ -263,7 +266,14 @@ internal sealed class PowerShellTool : McpServerTool
             foreach (var (key, value) in arguments)
             {
                 if (string.Equals(key, "ParameterSetName", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (value.ValueKind == JsonValueKind.String)
+                    {
+                        parameterSetName = value.GetString();
+                    }
+
                     continue;
+                }
 
                 ps.AddParameter(key, ConvertJsonElement(value));
             }
@@ -276,6 +286,8 @@ internal sealed class PowerShellTool : McpServerTool
                 PipelineResultTypes.All,
                 PipelineResultTypes.Output);
         }
+
+            return parameterSetName;
     }
 
     /// <summary>
@@ -317,7 +329,10 @@ internal sealed class PowerShellTool : McpServerTool
     /// <paramref name="serializerPs"/> must already have <c>Select-Object</c> and/or
     /// <c>ConvertTo-Json</c> configured; <paramref name="input"/> must be completed.
     /// </summary>
-    private static JsonElement ConvertToJsonEnvelope(PowerShell serializerPs, PSDataCollection<PSObject> input)
+    private static JsonElement ConvertToJsonEnvelope(
+        PowerShell serializerPs,
+        PSDataCollection<PSObject> input,
+        string? parameterSetName)
     {
         var itemsElement = input.Count == 0
             ? JsonSerializer.SerializeToElement(Array.Empty<object>())
@@ -328,6 +343,12 @@ internal sealed class PowerShellTool : McpServerTool
         using (var writer = new Utf8JsonWriter(ms))
         {
             writer.WriteStartObject();
+
+            if (!string.IsNullOrWhiteSpace(parameterSetName))
+            {
+                writer.WriteString("ParameterSetName", parameterSetName);
+            }
+
             writer.WritePropertyName("items");
             itemsElement.WriteTo(writer);
             writer.WriteEndObject();

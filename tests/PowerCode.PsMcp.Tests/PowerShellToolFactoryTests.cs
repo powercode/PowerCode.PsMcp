@@ -418,39 +418,211 @@ function Test-IntOutput {
     }
 
     [TestMethod]
-    public void Create_WithMultipleOutputTypes_OutputSchemaUsesLastDeclaredType()
+    public void Create_WithMultipleOutputTypes_OutputSchemaUsesUnionOfAllTypes()
     {
-        // Get-Process declares three output types for different parameter sets:
-        // ProcessModule (-Module), FileVersionInfo (-FileVersionInfo), Process (default).
+        // Get-Process output metadata only uses __AllParameterSets, so it falls back
+        // to a union of all declared output types.
         var tool = _factory.Create("Get-Process");
 
         Assert.IsNotNull(tool.ProtocolTool.OutputSchema);
-        var items = tool.ProtocolTool.OutputSchema!.Value
-            .GetProperty("properties").GetProperty("items");
-        Assert.AreEqual("array", items.GetProperty("type").GetString());
+        var itemsSchema = tool.ProtocolTool.OutputSchema!.Value
+            .GetProperty("properties")
+            .GetProperty("items")
+            .GetProperty("items");
 
-        // Last declared output type is used as the primary/default schema.
-        var processSchema = items.GetProperty("items");
+        Assert.IsTrue(itemsSchema.TryGetProperty("oneOf", out var oneOf));
+        Assert.AreEqual(3, oneOf.GetArrayLength());
+
+        var processSchema = oneOf.EnumerateArray()
+            .First(schema => schema.TryGetProperty("properties", out var properties)
+                && properties.TryGetProperty("ProcessName", out _)
+                && properties.TryGetProperty("Id", out _));
+
         Assert.AreEqual("object", processSchema.GetProperty("type").GetString());
-
-        var properties = processSchema.GetProperty("properties");
-        Assert.IsTrue(properties.TryGetProperty("ProcessName", out _), "Expected ProcessName in Process schema properties.");
-        Assert.IsTrue(properties.TryGetProperty("Id", out _), "Expected Id in Process schema properties.");
     }
 
     [TestMethod]
     public void Create_WithDateTimeOutputType_OutputSchemaHasDateTimeInItems()
     {
-        // Get-Date declares [OutputType([string])] and [OutputType([DateTime])].
+        // Get-Date can now resolve per-set output metadata, so this assertion accepts
+        // either flat or oneOf output schema as long as date-time metadata is present.
         var tool = _factory.Create("Get-Date");
 
         Assert.IsNotNull(tool.ProtocolTool.OutputSchema);
-        var items = tool.ProtocolTool.OutputSchema!.Value
-            .GetProperty("properties").GetProperty("items");
+        var outputSchema = tool.ProtocolTool.OutputSchema!.Value;
 
-        var dateTimeSchema = items.GetProperty("items");
-        Assert.AreEqual("string", dateTimeSchema.GetProperty("type").GetString());
-        Assert.AreEqual("date-time", dateTimeSchema.GetProperty("format").GetString());
+        if (outputSchema.TryGetProperty("oneOf", out var variants))
+        {
+            var hasDateTimeVariant = variants.EnumerateArray().Any(variant =>
+                ContainsSchemaWithTypeAndFormat(
+                    variant.GetProperty("properties").GetProperty("items").GetProperty("items"),
+                    "string",
+                    "date-time"));
+
+            Assert.IsTrue(hasDateTimeVariant, "Expected at least one output variant to map to date-time.");
+            return;
+        }
+
+        var itemsSchema = outputSchema.GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.IsTrue(ContainsSchemaWithTypeAndFormat(itemsSchema, "string", "date-time"));
+    }
+
+    [TestMethod]
+    public void Create_MultiSetFunctionWithPerSetOutputType_OutputSchemaHasPerSetOneOf()
+    {
+        DefineOutputPerSetFunction();
+
+        var tool = _factory.Create("Test-OutputPerSet");
+        var variants = GetOutputVariantsByParameterSetName(tool.ProtocolTool.OutputSchema!.Value);
+
+        Assert.HasCount(2, variants);
+
+        var byNameItems = variants["ByName"].GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.AreEqual("string", byNameItems.GetProperty("type").GetString());
+
+        var byIdItems = variants["ById"].GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.AreEqual("integer", byIdItems.GetProperty("type").GetString());
+    }
+
+    [TestMethod]
+    public void Create_MultiSetFunctionWithAllParameterSetsOutputType_OutputSchemaUsesUnionItems()
+    {
+        DefineOutputAllSetsFunction();
+
+        var tool = _factory.Create("Test-OutputAllSets");
+        var outputSchema = tool.ProtocolTool.OutputSchema!.Value;
+
+        Assert.IsFalse(outputSchema.TryGetProperty("oneOf", out _));
+
+        var itemsSchema = outputSchema.GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.IsTrue(itemsSchema.TryGetProperty("oneOf", out var oneOf));
+        Assert.AreEqual(2, oneOf.GetArrayLength());
+
+        var itemTypes = oneOf.EnumerateArray()
+            .Select(item => item.GetProperty("type").GetString())
+            .ToList();
+
+        CollectionAssert.Contains(itemTypes, "string");
+        CollectionAssert.Contains(itemTypes, "integer");
+    }
+
+    [TestMethod]
+    public void Create_MultiSetFunctionWithPartialPerSetOutputType_OutputSchemaFillsFromAllParameterSets()
+    {
+        DefineOutputPartialSetsFunction();
+
+        var tool = _factory.Create("Test-OutputPartialSets");
+        var variants = GetOutputVariantsByParameterSetName(tool.ProtocolTool.OutputSchema!.Value);
+
+        var byNameItems = variants["ByName"].GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.AreEqual("string", byNameItems.GetProperty("type").GetString());
+
+        var byIdItems = variants["ById"].GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.AreEqual("object", byIdItems.GetProperty("type").GetString());
+    }
+
+    [TestMethod]
+    public void Create_MultiSetFunctionWithNoOutputType_OutputSchemaIsNull()
+    {
+        DefineMultiSetFunction();
+
+        var tool = _factory.Create("Test-MultiSet");
+
+        Assert.IsNull(tool.ProtocolTool.OutputSchema);
+    }
+
+    [TestMethod]
+    public void Create_SingleSetFunctionWithOutputType_OutputSchemaIsFlatWithoutOneOf()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-SingleSetOutput {
+    [OutputType([string])]
+    param([string]$Name)
+    $Name
+}");
+        ps.Invoke();
+
+        var tool = _factory.Create("Test-SingleSetOutput");
+        var outputSchema = tool.ProtocolTool.OutputSchema!.Value;
+
+        Assert.IsFalse(outputSchema.TryGetProperty("oneOf", out _));
+        Assert.AreEqual("string", outputSchema
+            .GetProperty("properties")
+            .GetProperty("items")
+            .GetProperty("items")
+            .GetProperty("type")
+            .GetString());
+    }
+
+    [TestMethod]
+    public void Create_SingleSetFunctionWithMultiTypePerSetOutputType_OutputSchemaUsesItemsOneOf()
+    {
+        DefineOutputMultiTypePerSetFunction();
+
+        var tool = _factory.Create("Test-OutputMultiTypePerSet");
+        var outputSchema = tool.ProtocolTool.OutputSchema!.Value;
+
+        Assert.IsFalse(outputSchema.TryGetProperty("oneOf", out _));
+
+        var itemsSchema = outputSchema.GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.IsTrue(itemsSchema.TryGetProperty("oneOf", out var oneOf));
+        Assert.AreEqual(2, oneOf.GetArrayLength());
+
+        var types = oneOf.EnumerateArray()
+            .Select(item => item.GetProperty("type").GetString())
+            .ToList();
+        CollectionAssert.Contains(types, "string");
+        CollectionAssert.Contains(types, "integer");
+    }
+
+    [TestMethod]
+    public void Create_WithParameterSetFilter_OutputSchemaNarrowsToSelectedSetTypes()
+    {
+        DefineOutputPerSetFunction();
+
+        var tool = _factory.Create("Test-OutputPerSet", new McpToolConfig { ParameterSets = ["ByName"] });
+        var outputSchema = tool.ProtocolTool.OutputSchema!.Value;
+
+        Assert.IsFalse(outputSchema.TryGetProperty("oneOf", out _));
+
+        var byNameType = outputSchema
+            .GetProperty("properties")
+            .GetProperty("items")
+            .GetProperty("items")
+            .GetProperty("type")
+            .GetString();
+
+        Assert.AreEqual("string", byNameType);
+    }
+
+    [TestMethod]
+    public void Create_WithGetUptime_OutputSchemaUsesPerSetCmdletOutputType()
+    {
+        if (!CommandExists("Get-Uptime"))
+        {
+            Assert.Inconclusive("Get-Uptime is not available in this PowerShell environment.");
+        }
+
+        var tool = _factory.Create("Get-Uptime");
+        var outputSchema = tool.ProtocolTool.OutputSchema;
+
+        Assert.IsNotNull(outputSchema);
+        Assert.IsTrue(outputSchema.Value.TryGetProperty("oneOf", out _),
+            "Expected Get-Uptime output schema to use per-set oneOf variants.");
+
+        var variants = GetOutputVariantsByParameterSetName(outputSchema.Value);
+        Assert.IsTrue(variants.ContainsKey("Timespan"));
+        Assert.IsTrue(variants.ContainsKey("Since"));
+
+        var timespanItems = variants["Timespan"].GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.IsTrue(
+            ContainsSchemaWithTypeAndFormat(timespanItems, "object")
+            || ContainsSchemaWithTypeAndFormat(timespanItems, "string"));
+
+        var sinceItems = variants["Since"].GetProperty("properties").GetProperty("items").GetProperty("items");
+        Assert.IsTrue(ContainsSchemaWithTypeAndFormat(sinceItems, "string", "date-time"));
     }
 
     // ── Multiple parameter sets ──────────────────────────────────────────────
@@ -757,6 +929,93 @@ function Test-MultiSetWithShared {
         ps.Invoke();
     }
 
+    private void DefineOutputPerSetFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-OutputPerSet {
+    [CmdletBinding(DefaultParameterSetName='ByName')]
+    [OutputType([string], ParameterSetName='ByName')]
+    [OutputType([int], ParameterSetName='ById')]
+    param(
+        [Parameter(Mandatory, ParameterSetName='ByName')]
+        [string]$Name,
+
+        [Parameter(Mandatory, ParameterSetName='ById')]
+        [int]$Id
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
+    $Id
+}");
+        ps.Invoke();
+    }
+
+    private void DefineOutputAllSetsFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-OutputAllSets {
+    [CmdletBinding(DefaultParameterSetName='ByName')]
+    [OutputType([string])]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory, ParameterSetName='ByName')]
+        [string]$Name,
+
+        [Parameter(Mandatory, ParameterSetName='ById')]
+        [int]$Id
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
+    $Id
+}");
+        ps.Invoke();
+    }
+
+    private void DefineOutputPartialSetsFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-OutputPartialSets {
+    [CmdletBinding(DefaultParameterSetName='ByName')]
+    [OutputType([string], ParameterSetName='ByName')]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory, ParameterSetName='ByName')]
+        [string]$Name,
+
+        [Parameter(Mandatory, ParameterSetName='ById')]
+        [int]$Id
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
+    @{ Id = $Id }
+}");
+        ps.Invoke();
+    }
+
+    private void DefineOutputMultiTypePerSetFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-OutputMultiTypePerSet {
+    [CmdletBinding(DefaultParameterSetName='Multi')]
+    [OutputType([string], [int], ParameterSetName='Multi')]
+    param(
+        [Parameter(Mandatory, ParameterSetName='Multi')]
+        [string]$Input
+    )
+
+    $Input
+}");
+        ps.Invoke();
+    }
+
     private static List<JsonElement> EnumerateSchemaProperties(JsonElement inputSchema)
     {
         if (inputSchema.TryGetProperty("oneOf", out var oneOf))
@@ -802,5 +1061,55 @@ function Test-MultiSetWithShared {
                 .GetString()!,
             variant => variant,
             StringComparer.OrdinalIgnoreCase);
+    }
+
+    private bool CommandExists(string commandName)
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddCommand("Get-Command").AddParameter("Name", commandName).AddParameter("ErrorAction", ActionPreference.SilentlyContinue);
+        var results = ps.Invoke();
+        return results.Count > 0;
+    }
+
+    private static Dictionary<string, JsonElement> GetOutputVariantsByParameterSetName(JsonElement outputSchema)
+    {
+        Assert.IsTrue(outputSchema.TryGetProperty("oneOf", out var oneOf),
+            "Expected output schema oneOf for multiple parameter-set output mappings.");
+
+        return oneOf.EnumerateArray().ToDictionary(
+            variant => variant
+                .GetProperty("properties")
+                .GetProperty("ParameterSetName")
+                .GetProperty("const")
+                .GetString()!,
+            variant => variant,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsSchemaWithTypeAndFormat(JsonElement schema, string type, string? format = null)
+    {
+        if (schema.TryGetProperty("oneOf", out var oneOf))
+        {
+            return oneOf.EnumerateArray().Any(item => ContainsSchemaWithTypeAndFormat(item, type, format));
+        }
+
+        if (!schema.TryGetProperty("type", out var schemaType))
+        {
+            return false;
+        }
+
+        if (!string.Equals(schemaType.GetString(), type, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (format is null)
+        {
+            return true;
+        }
+
+        return schema.TryGetProperty("format", out var schemaFormat)
+               && string.Equals(schemaFormat.GetString(), format, StringComparison.OrdinalIgnoreCase);
     }
 }
