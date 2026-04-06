@@ -147,6 +147,30 @@ public sealed class PowerShellToolTests : IDisposable
         Assert.IsTrue(result.IsError, "A cancelled invocation should return IsError=true.");
     }
 
+    [TestMethod]
+    public async Task InvokeAsync_WithParameterSetNameArgument_StripsDiscriminatorAndSucceeds()
+    {
+        DefineMultiSetEchoFunction();
+
+        var tool = _factory.Create("Test-MultiSetEcho");
+        var args = new Dictionary<string, JsonElement>
+        {
+            ["ParameterSetName"] = JsonSerializer.SerializeToElement("ByName"),
+            ["Name"] = JsonSerializer.SerializeToElement("test-value")
+        };
+        var ctx = BuildContext(tool, args);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.AreNotEqual(true, result.IsError,
+            "ParameterSetName should be ignored and should not cause parameter binding failure.");
+
+        var text = ((TextContentBlock)result.Content[0]).Text;
+        Assert.Contains("ByName:test-value", text);
+        Assert.DoesNotContain("ParameterSetName", text);
+        Assert.DoesNotContain("A parameter cannot be found that matches parameter name", text);
+    }
+
     // ── Structured content envelope ───────────────────────────────────────────
 
     [TestMethod]
@@ -275,6 +299,31 @@ function Get-TestRecord {
             Value = 'nested'
         }
     }
+}");
+        ps.Invoke();
+    }
+
+    private void DefineMultiSetEchoFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-MultiSetEcho {
+    [CmdletBinding(DefaultParameterSetName = 'ByName')]
+    param(
+        [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
+        [int]$Id
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'ByName') {
+        Write-Output (""ByName:{0}"" -f $Name)
+        return
+    }
+
+    Write-Output (""ById:{0}"" -f $Id)
 }");
         ps.Invoke();
     }

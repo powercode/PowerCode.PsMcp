@@ -262,6 +262,9 @@ internal sealed class PowerShellTool : McpServerTool
         {
             foreach (var (key, value) in arguments)
             {
+                if (string.Equals(key, "ParameterSetName", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
                 ps.AddParameter(key, ConvertJsonElement(value));
             }
         }

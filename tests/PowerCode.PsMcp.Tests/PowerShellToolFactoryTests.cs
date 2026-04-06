@@ -13,6 +13,9 @@ namespace PowerCode.PsMcp.Tests;
 [TestCategory("Unit")]
 public sealed class PowerShellToolFactoryTests : IDisposable
 {
+    private static readonly string[] ByNameRequired = ["ParameterSetName", "Name"];
+    private static readonly string[] ByIdRequired = ["ParameterSetName", "Id"];
+
     private readonly Runspace _runspace;
     private readonly PowerShellToolFactory _factory;
 
@@ -80,10 +83,8 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     public void Create_WithGetProcess_HasNamePropertyInSchema()
     {
         var tool = _factory.Create("Get-Process");
-        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
-
-        // Get-Process -Name is a string[] parameter; should appear in properties.
-        Assert.IsTrue(properties.TryGetProperty("Name", out _),
+        // Get-Process -Name is a string[] parameter; it should appear in at least one variant.
+        Assert.IsTrue(AnySchemaPropertiesContain(tool.ProtocolTool.InputSchema, "Name"),
             "Expected 'Name' to appear in the input schema properties.");
     }
 
@@ -93,10 +94,9 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     public void Create_StringArrayParameter_MapsToArrayType()
     {
         var tool = _factory.Create("Get-Process");
-        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var nameProp = FindPropertySchema(tool.ProtocolTool.InputSchema, "Name");
 
         // Get-Process -Name is string[] → JSON array with string items.
-        var nameProp = properties.GetProperty("Name");
         Assert.AreEqual("array", nameProp.GetProperty("type").GetString());
         Assert.AreEqual("string", nameProp.GetProperty("items").GetProperty("type").GetString());
     }
@@ -105,11 +105,9 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     public void Create_IntArrayParameter_MapsToArrayWithIntegerItems()
     {
         var tool = _factory.Create("Get-Process");
-        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var idProp = FindPropertySchema(tool.ProtocolTool.InputSchema, "Id");
 
         // Get-Process -Id is int[] → JSON array with integer items.
-        Assert.IsTrue(properties.TryGetProperty("Id", out var idProp),
-            "Expected 'Id' to appear in the input schema properties.");
         Assert.AreEqual("array", idProp.GetProperty("type").GetString());
         Assert.AreEqual("integer", idProp.GetProperty("items").GetProperty("type").GetString());
     }
@@ -120,12 +118,12 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     public void Create_CommonParameters_AreExcludedFromSchema()
     {
         var tool = _factory.Create("Get-Process");
-        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var propertySets = EnumerateSchemaProperties(tool.ProtocolTool.InputSchema);
 
         var commonParams = new[] { "Verbose", "Debug", "ErrorAction", "WhatIf", "Confirm" };
         foreach (var param in commonParams)
         {
-            Assert.IsFalse(properties.TryGetProperty(param, out _),
+            Assert.IsTrue(propertySets.All(properties => !properties.TryGetProperty(param, out _)),
                 $"Common parameter '{param}' should not appear in the schema.");
         }
     }
@@ -504,13 +502,115 @@ function Test-MultiSet {
         DefineMultiSetFunction();
 
         var tool = _factory.Create("Test-MultiSet");
+        var variants = GetVariantsByParameterSetName(tool.ProtocolTool.InputSchema);
 
-        // Neither Name nor Id is mandatory in every set, so the required array must be absent
-        // (or empty) – each is only required when the caller picks that set.
-        Assert.IsFalse(
-            tool.ProtocolTool.InputSchema.TryGetProperty("required", out var req) &&
-            req.EnumerateArray().Any(),
-            "Parameters that are mandatory in only one parameter set must not appear in 'required'.");
+        var byNameRequired = variants["ByName"].GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
+        var byIdRequired = variants["ById"].GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
+
+        CollectionAssert.Contains(byNameRequired, "ParameterSetName");
+        CollectionAssert.Contains(byNameRequired, "Name");
+        CollectionAssert.DoesNotContain(byNameRequired, "Id");
+
+        CollectionAssert.Contains(byIdRequired, "ParameterSetName");
+        CollectionAssert.Contains(byIdRequired, "Id");
+        CollectionAssert.DoesNotContain(byIdRequired, "Name");
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_SchemaHasOneOfWithTwoVariants()
+    {
+        DefineMultiSetFunction();
+
+        var inputSchema = _factory.Create("Test-MultiSet").ProtocolTool.InputSchema;
+
+        Assert.IsTrue(inputSchema.TryGetProperty("oneOf", out var oneOf));
+        Assert.AreEqual(2, oneOf.GetArrayLength());
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_EachVariantHasParameterSetNameDiscriminator()
+    {
+        DefineMultiSetFunction();
+
+        var variants = GetVariantsByParameterSetName(_factory.Create("Test-MultiSet").ProtocolTool.InputSchema);
+
+        Assert.AreEqual("string", variants["ByName"].GetProperty("properties").GetProperty("ParameterSetName").GetProperty("type").GetString());
+        Assert.AreEqual("ByName", variants["ByName"].GetProperty("properties").GetProperty("ParameterSetName").GetProperty("const").GetString());
+
+        Assert.AreEqual("string", variants["ById"].GetProperty("properties").GetProperty("ParameterSetName").GetProperty("type").GetString());
+        Assert.AreEqual("ById", variants["ById"].GetProperty("properties").GetProperty("ParameterSetName").GetProperty("const").GetString());
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_VariantRequiredIncludesDiscriminatorAndMandatoryParams()
+    {
+        DefineMultiSetFunction();
+
+        var variants = GetVariantsByParameterSetName(_factory.Create("Test-MultiSet").ProtocolTool.InputSchema);
+
+        var byNameRequired = variants["ByName"].GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
+        var byIdRequired = variants["ById"].GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
+
+        CollectionAssert.AreEquivalent(ByNameRequired, byNameRequired);
+        CollectionAssert.AreEquivalent(ByIdRequired, byIdRequired);
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_DefaultSetVariantDescriptionHasDefaultSuffix()
+    {
+        DefineMultiSetFunction();
+
+        var variants = GetVariantsByParameterSetName(_factory.Create("Test-MultiSet").ProtocolTool.InputSchema);
+
+        Assert.AreEqual("Parameter set 'ByName' (default)", variants["ByName"].GetProperty("description").GetString());
+        Assert.AreEqual("Parameter set 'ById'", variants["ById"].GetProperty("description").GetString());
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_SharedParameterAppearsInAllVariants()
+    {
+        DefineMultiSetWithSharedFunction();
+
+        var variants = GetVariantsByParameterSetName(_factory.Create("Test-MultiSetWithShared").ProtocolTool.InputSchema);
+
+        Assert.IsTrue(variants["ByName"].GetProperty("properties").TryGetProperty("Force", out _));
+        Assert.IsTrue(variants["ById"].GetProperty("properties").TryGetProperty("Force", out _));
+    }
+
+    [TestMethod]
+    public void Create_MultipleParameterSets_NoTopLevelPropertiesOrRequired()
+    {
+        DefineMultiSetFunction();
+
+        var inputSchema = _factory.Create("Test-MultiSet").ProtocolTool.InputSchema;
+
+        Assert.AreEqual("object", inputSchema.GetProperty("type").GetString());
+        Assert.IsTrue(inputSchema.TryGetProperty("oneOf", out _));
+        Assert.IsFalse(inputSchema.TryGetProperty("properties", out _));
+        Assert.IsFalse(inputSchema.TryGetProperty("required", out _));
+    }
+
+    [TestMethod]
+    public void Create_SingleParameterSet_SchemaHasNoOneOf()
+    {
+        DefineWeatherFunction();
+
+        var inputSchema = _factory.Create("Get-CurrentWeather").ProtocolTool.InputSchema;
+
+        Assert.IsFalse(inputSchema.TryGetProperty("oneOf", out _));
+        Assert.IsTrue(inputSchema.TryGetProperty("properties", out _));
     }
 
     // ── ParameterSets filtering ──────────────────────────────────────────────
@@ -551,10 +651,10 @@ function Test-MultiSet {
         DefineMultiSetFunction();
 
         var tool = _factory.Create("Test-MultiSet", new McpToolConfig { ParameterSets = ["ByName", "ById"] });
-        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var variants = GetVariantsByParameterSetName(tool.ProtocolTool.InputSchema);
 
-        Assert.IsTrue(properties.TryGetProperty("Name", out _));
-        Assert.IsTrue(properties.TryGetProperty("Id", out _));
+        Assert.IsTrue(variants["ByName"].GetProperty("properties").TryGetProperty("Name", out _));
+        Assert.IsTrue(variants["ById"].GetProperty("properties").TryGetProperty("Id", out _));
     }
 
     [TestMethod]
@@ -591,39 +691,116 @@ function Test-MultiSet {
 
         Assert.AreEqual("process", tool.ProtocolTool.Name);
 
-        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var variants = GetVariantsByParameterSetName(tool.ProtocolTool.InputSchema);
+        var byNameProperties = variants["Name"].GetProperty("properties");
+        var byIdProperties = variants["Id"].GetProperty("properties");
 
-        // Name and Id belong to the filtered sets – both must be present.
-        Assert.IsTrue(properties.TryGetProperty("Name", out _),
-            "Expected 'Name' in schema.");
-        Assert.IsTrue(properties.TryGetProperty("Id", out _),
-            "Expected 'Id' in schema.");
+        Assert.IsTrue(byNameProperties.TryGetProperty("Name", out _),
+            "Expected 'Name' in Name parameter-set schema.");
+        Assert.IsTrue(byIdProperties.TryGetProperty("Id", out _),
+            "Expected 'Id' in Id parameter-set schema.");
 
-        // InputObject is exclusive to the InputObject/InputObjectWithUserName sets – must be absent.
-        Assert.IsFalse(properties.TryGetProperty("InputObject", out _),
+        Assert.IsFalse(byNameProperties.TryGetProperty("InputObject", out _),
+            "Expected 'InputObject' to be absent when filtered to Name and Id sets.");
+        Assert.IsFalse(byIdProperties.TryGetProperty("InputObject", out _),
             "Expected 'InputObject' to be absent when filtered to Name and Id sets.");
 
-        // IncludeUserName is exclusive to the *WithUserName sets – must be absent.
-        Assert.IsFalse(properties.TryGetProperty("IncludeUserName", out _),
+        Assert.IsFalse(byNameProperties.TryGetProperty("IncludeUserName", out _),
+            "Expected 'IncludeUserName' to be absent when filtered to Name and Id sets.");
+        Assert.IsFalse(byIdProperties.TryGetProperty("IncludeUserName", out _),
             "Expected 'IncludeUserName' to be absent when filtered to Name and Id sets.");
     }
 
     [TestMethod]
     public void Create_GetProcessWithNameAndIdSets_NeitherNameNorIdIsRequired()
     {
-        // Name is mandatory only in the Name set; Id only in the Id set.
-        // Neither is mandatory in every active set, so neither should be required.
+        // Name and Id must never be required in the opposite parameter-set variant.
         var config = new McpToolConfig
         {
             ParameterSets = ["Name", "Id"]
         };
 
         var tool = _factory.Create("Get-Process", config);
+        var variants = GetVariantsByParameterSetName(tool.ProtocolTool.InputSchema);
+        var nameRequired = variants["Name"].GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
+        var idRequired = variants["Id"].GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
 
-        var hasRequired = tool.ProtocolTool.InputSchema.TryGetProperty("required", out var req) &&
-                          req.EnumerateArray().Any();
+        CollectionAssert.Contains(nameRequired, "ParameterSetName");
+        CollectionAssert.Contains(idRequired, "ParameterSetName");
+        CollectionAssert.DoesNotContain(nameRequired, "Id");
+        CollectionAssert.DoesNotContain(idRequired, "Name");
+    }
 
-        Assert.IsFalse(hasRequired,
-            "Neither Name nor Id is mandatory in every active set – required array must be absent.");
+    private void DefineMultiSetWithSharedFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript(@"
+function Test-MultiSetWithShared {
+    [CmdletBinding(DefaultParameterSetName = 'ByName')]
+    param(
+        [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
+        [int]$Id,
+
+        [switch]$Force
+    )
+}");
+        ps.Invoke();
+    }
+
+    private static List<JsonElement> EnumerateSchemaProperties(JsonElement inputSchema)
+    {
+        if (inputSchema.TryGetProperty("oneOf", out var oneOf))
+        {
+            return oneOf.EnumerateArray()
+                .Select(variant => variant.GetProperty("properties"))
+                .ToList();
+        }
+
+        return [inputSchema.GetProperty("properties")];
+    }
+
+    private static bool AnySchemaPropertiesContain(JsonElement inputSchema, string propertyName)
+    {
+        return EnumerateSchemaProperties(inputSchema)
+            .Any(properties => properties.TryGetProperty(propertyName, out _));
+    }
+
+    private static JsonElement FindPropertySchema(JsonElement inputSchema, string propertyName)
+    {
+        foreach (var properties in EnumerateSchemaProperties(inputSchema))
+        {
+            if (properties.TryGetProperty(propertyName, out var propertySchema))
+            {
+                return propertySchema;
+            }
+        }
+
+        Assert.Fail($"Expected '{propertyName}' property schema to be present.");
+        return default;
+    }
+
+    private static Dictionary<string, JsonElement> GetVariantsByParameterSetName(JsonElement inputSchema)
+    {
+        Assert.IsTrue(inputSchema.TryGetProperty("oneOf", out var oneOf),
+            "Expected 'oneOf' schema for multiple parameter sets.");
+
+        return oneOf.EnumerateArray().ToDictionary(
+            variant => variant
+                .GetProperty("properties")
+                .GetProperty("ParameterSetName")
+                .GetProperty("const")
+                .GetString()!,
+            variant => variant,
+            StringComparer.OrdinalIgnoreCase);
     }
 }

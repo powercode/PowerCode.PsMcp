@@ -351,6 +351,10 @@ internal sealed class PowerShellToolFactory : IDisposable
         IReadOnlyDictionary<string, string> parameterDescriptions,
         IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
+        // Multi-set commands get a oneOf schema with a per-set discriminator.
+        if (parameterSets.Count > 1)
+            return BuildOneOfInputSchema(commandInfo, parameterDescriptions, parameterSets);
+
         var properties = new Dictionary<string, object?>();
         var required = new List<string>();
 
@@ -397,6 +401,66 @@ internal sealed class PowerShellToolFactory : IDisposable
         {
             schema["required"] = required.ToArray();
         }
+
+        var json = JsonSerializer.Serialize(schema);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement BuildOneOfInputSchema(
+        CommandInfo commandInfo,
+        IReadOnlyDictionary<string, string> parameterDescriptions,
+        IReadOnlyList<CommandParameterSetInfo> parameterSets)
+    {
+        var variants = new List<Dictionary<string, object?>>(parameterSets.Count);
+
+        foreach (var parameterSet in parameterSets)
+        {
+            var properties = new Dictionary<string, object?>
+            {
+                ["ParameterSetName"] = new Dictionary<string, object?>
+                {
+                    ["type"] = "string",
+                    ["const"] = parameterSet.Name,
+                    ["description"] = $"Selects the '{parameterSet.Name}' parameter set."
+                }
+            };
+
+            var required = new List<string> { "ParameterSetName" };
+
+            foreach (var parameterInfo in parameterSet.Parameters)
+            {
+                if (CommonParameters.Contains(parameterInfo.Name))
+                    continue;
+
+                if (!commandInfo.Parameters.TryGetValue(parameterInfo.Name, out var paramMeta))
+                    continue;
+
+                if (ExcludedTypes.Contains(paramMeta.ParameterType))
+                    continue;
+
+                parameterDescriptions.TryGetValue(parameterInfo.Name, out var helpDescription);
+                properties[parameterInfo.Name] = BuildPropertySchema(paramMeta, helpDescription);
+
+                if (parameterInfo.IsMandatory)
+                    required.Add(parameterInfo.Name);
+            }
+
+            variants.Add(new Dictionary<string, object?>
+            {
+                ["description"] = parameterSet.IsDefault
+                    ? $"Parameter set '{parameterSet.Name}' (default)"
+                    : $"Parameter set '{parameterSet.Name}'",
+                ["properties"] = properties,
+                ["required"] = required.ToArray()
+            });
+        }
+
+        var schema = new Dictionary<string, object?>
+        {
+            ["type"] = "object",
+            ["oneOf"] = variants.ToArray()
+        };
 
         var json = JsonSerializer.Serialize(schema);
         using var doc = JsonDocument.Parse(json);
