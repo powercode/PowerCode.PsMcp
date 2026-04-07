@@ -446,6 +446,7 @@ internal sealed class PowerShellToolFactory : IDisposable
                     ? $"{parameterSet.Name} (default)"
                     : $"{parameterSet.Name}",
                 ["properties"] = properties,
+                ["additionalProperties"] = false,
                 ["required"] = required.ToArray()
             });
         }
