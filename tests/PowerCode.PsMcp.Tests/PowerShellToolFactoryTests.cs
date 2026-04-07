@@ -15,6 +15,8 @@ public sealed class PowerShellToolFactoryTests : IDisposable
 {
     private static readonly string[] s_byNameRequired = ["Name"];
     private static readonly string[] s_byIdRequired = ["Id"];
+    private static readonly string[] s_stringAndNullTypes = ["string", "null"];
+    private static readonly string[] s_arrayAndNullTypes = ["array", "null"];
 
     private readonly Runspace _runspace;
     private readonly PowerShellToolFactory _factory;
@@ -300,6 +302,418 @@ public sealed class PowerShellToolFactoryTests : IDisposable
         var pattern = properties.GetProperty("PostalCode").GetProperty("pattern").GetString();
 
         Assert.AreEqual(@"^\d{5}(-\d{4})?$", pattern);
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateRange_EmitsMinimumAndMaximum()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-RangeMinMax {
+                         param(
+                             [ValidateRange(1,10)]
+                             [int]$Value
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valueProp = _factory.Create("Test-RangeMinMax").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Value");
+
+        Assert.AreEqual(1d, valueProp.GetProperty("minimum").GetDouble());
+        Assert.AreEqual(10d, valueProp.GetProperty("maximum").GetDouble());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateRangeKindPositive_EmitsExclusiveMinimum()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-RangeKindPositive {
+                         param(
+                             [ValidateRange([System.Management.Automation.ValidateRangeKind]::Positive)]
+                             [int]$Value
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valueProp = _factory.Create("Test-RangeKindPositive").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Value");
+
+        Assert.AreEqual(0d, valueProp.GetProperty("exclusiveMinimum").GetDouble());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateRangeKindNonNegative_EmitsMinimumZero()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-RangeKindNonNegative {
+                         param(
+                             [ValidateRange([System.Management.Automation.ValidateRangeKind]::NonNegative)]
+                             [int]$Value
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valueProp = _factory.Create("Test-RangeKindNonNegative").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Value");
+
+        Assert.AreEqual(0d, valueProp.GetProperty("minimum").GetDouble());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateRangeKindNegative_EmitsExclusiveMaximum()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-RangeKindNegative {
+                         param(
+                             [ValidateRange([System.Management.Automation.ValidateRangeKind]::Negative)]
+                             [int]$Value
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valueProp = _factory.Create("Test-RangeKindNegative").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Value");
+
+        Assert.AreEqual(0d, valueProp.GetProperty("exclusiveMaximum").GetDouble());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateRangeKindNonPositive_EmitsMaximumZero()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-RangeKindNonPositive {
+                         param(
+                             [ValidateRange([System.Management.Automation.ValidateRangeKind]::NonPositive)]
+                             [int]$Value
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valueProp = _factory.Create("Test-RangeKindNonPositive").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Value");
+
+        Assert.AreEqual(0d, valueProp.GetProperty("maximum").GetDouble());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateRangeOnString_DoesNotEmitMinMax()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-RangeString {
+                         param(
+                             [ValidateRange(1,10)]
+                             [string]$Value
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valueProp = _factory.Create("Test-RangeString").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Value");
+
+        Assert.IsFalse(valueProp.TryGetProperty("minimum", out _));
+        Assert.IsFalse(valueProp.TryGetProperty("maximum", out _));
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateLength_EmitsMinLengthAndMaxLength()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-StringLength {
+                         param(
+                             [ValidateLength(3,50)]
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var nameProp = _factory.Create("Test-StringLength").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name");
+
+        Assert.AreEqual(3, nameProp.GetProperty("minLength").GetInt32());
+        Assert.AreEqual(50, nameProp.GetProperty("maxLength").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateLengthZeroMin_OmitsMinLength()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-StringLengthZeroMin {
+                         param(
+                             [ValidateLength(0,100)]
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var nameProp = _factory.Create("Test-StringLengthZeroMin").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name");
+
+        Assert.IsFalse(nameProp.TryGetProperty("minLength", out _));
+        Assert.AreEqual(100, nameProp.GetProperty("maxLength").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateCount_EmitsMinItemsAndMaxItems()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-ArrayCount {
+                         param(
+                             [ValidateCount(1,5)]
+                             [int[]]$Values
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valuesProp = _factory.Create("Test-ArrayCount").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Values");
+
+        Assert.AreEqual(1, valuesProp.GetProperty("minItems").GetInt32());
+        Assert.AreEqual(5, valuesProp.GetProperty("maxItems").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateCountZeroMin_OmitsMinItems()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-ArrayCountZeroMin {
+                         param(
+                             [ValidateCount(0,10)]
+                             [string[]]$Values
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valuesProp = _factory.Create("Test-ArrayCountZeroMin").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Values");
+
+        Assert.IsFalse(valuesProp.TryGetProperty("minItems", out _));
+        Assert.AreEqual(10, valuesProp.GetProperty("maxItems").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateNotNullOrEmpty_String_EmitsMinLength1()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-NotNullOrEmptyString {
+                         param(
+                             [ValidateNotNullOrEmpty()]
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var nameProp = _factory.Create("Test-NotNullOrEmptyString").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name");
+
+        Assert.AreEqual(1, nameProp.GetProperty("minLength").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateNotNullOrEmpty_Array_EmitsMinItems1()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-NotNullOrEmptyArray {
+                         param(
+                             [ValidateNotNullOrEmpty()]
+                             [string[]]$Values
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valuesProp = _factory.Create("Test-NotNullOrEmptyArray").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Values");
+
+        Assert.AreEqual(1, valuesProp.GetProperty("minItems").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateNotNullOrEmptyAndAllowEmptyString_SuppressesMinLength()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-AllowEmptyString {
+                         param(
+                             [ValidateNotNullOrEmpty()]
+                             [AllowEmptyString()]
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var nameProp = _factory.Create("Test-AllowEmptyString").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name");
+
+        Assert.IsFalse(nameProp.TryGetProperty("minLength", out _));
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateNotNullOrEmptyAndAllowEmptyCollection_SuppressesMinItems()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-AllowEmptyCollection {
+                         param(
+                             [ValidateNotNullOrEmpty()]
+                             [AllowEmptyCollection()]
+                             [int[]]$Values
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valuesProp = _factory.Create("Test-AllowEmptyCollection").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Values");
+
+        Assert.IsFalse(valuesProp.TryGetProperty("minItems", out _));
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithValidateNotNullOrEmptyAndValidateLength_PreservesHigherMinLength()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-NotNullOrEmptyWithLength {
+                         param(
+                             [ValidateNotNullOrEmpty()]
+                             [ValidateLength(3,50)]
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var nameProp = _factory.Create("Test-NotNullOrEmptyWithLength").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name");
+
+        Assert.AreEqual(3, nameProp.GetProperty("minLength").GetInt32());
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithAllowNull_String_EmitsTypeUnion()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-AllowNullString {
+                         param(
+                             [AllowNull()]
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var typeArray = _factory.Create("Test-AllowNullString").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name")
+            .GetProperty("type");
+
+        Assert.AreEqual(JsonValueKind.Array, typeArray.ValueKind);
+        var types = typeArray.EnumerateArray().Select(element => element.GetString()).ToList();
+        CollectionAssert.AreEquivalent(s_stringAndNullTypes, types);
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithAllowNull_Array_EmitsTypeUnion()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-AllowNullArray {
+                         param(
+                             [AllowNull()]
+                             [int[]]$Values
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var typeArray = _factory.Create("Test-AllowNullArray").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Values")
+            .GetProperty("type");
+
+        Assert.AreEqual(JsonValueKind.Array, typeArray.ValueKind);
+        var types = typeArray.EnumerateArray().Select(element => element.GetString()).ToList();
+        CollectionAssert.AreEquivalent(s_arrayAndNullTypes, types);
+    }
+
+    [TestMethod]
+    public void Create_FunctionWithoutAllowNull_TypeIsSingleString()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-WithoutAllowNull {
+                         param(
+                             [string]$Name
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var typeValue = _factory.Create("Test-WithoutAllowNull").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Name")
+            .GetProperty("type");
+
+        Assert.AreEqual(JsonValueKind.String, typeValue.ValueKind);
+        Assert.AreEqual("string", typeValue.GetString());
     }
 
     [TestMethod]

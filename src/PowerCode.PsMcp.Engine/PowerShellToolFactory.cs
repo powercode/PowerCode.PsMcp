@@ -1,6 +1,8 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Reflection;
+using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 
@@ -513,6 +515,9 @@ internal sealed class PowerShellToolFactory : IDisposable
         var property = new Dictionary<string, object?>();
 
         var paramType = Nullable.GetUnderlyingType(paramMeta.ParameterType) ?? paramMeta.ParameterType;
+        var constraintType = paramType.IsArray
+            ? (paramType.GetElementType() ?? typeof(string))
+            : paramType;
 
         // Handle array types: expose as JSON array with the element type.
         if (paramType.IsArray)
@@ -533,21 +538,178 @@ internal sealed class PowerShellToolFactory : IDisposable
             }
         }
 
-        // Expose enum values from ValidateSet attributes.
+        ApplyValidateSet(property, paramMeta);
+        ApplyValidatePattern(property, paramMeta);
+        ApplyValidateRange(property, paramMeta, constraintType);
+        ApplyValidateLength(property, paramMeta, paramType);
+        ApplyValidateCount(property, paramMeta, paramType);
+        ApplyValidateNotNullOrEmpty(property, paramMeta, paramType);
+        ApplyAllowNull(property, paramMeta);
+        ApplyDescription(property, paramMeta, helpDescription);
+
+        return property;
+    }
+
+    /// <summary>
+    /// Adds enum constraints from the first <see cref="ValidateSetAttribute"/>.
+    /// </summary>
+    private static void ApplyValidateSet(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta)
+    {
         var validateSet = paramMeta.Attributes.OfType<ValidateSetAttribute>().FirstOrDefault();
-        if (validateSet is not null)
-        {
-            property["enum"] = validateSet.ValidValues.Cast<object>().ToArray();
-        }
+        if (validateSet is null)
+            return;
 
-        // Expose regex pattern from ValidatePattern attributes.
+        property["enum"] = validateSet.ValidValues.Cast<object>().ToArray();
+    }
+
+    /// <summary>
+    /// Adds regex pattern constraints from the first <see cref="ValidatePatternAttribute"/>.
+    /// </summary>
+    private static void ApplyValidatePattern(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta)
+    {
         var validatePattern = paramMeta.Attributes.OfType<ValidatePatternAttribute>().FirstOrDefault();
-        if (validatePattern is not null)
+        if (validatePattern is null)
+            return;
+
+        property["pattern"] = validatePattern.RegexPattern;
+    }
+
+    /// <summary>
+    /// Adds numeric range constraints from <see cref="ValidateRangeAttribute"/>.
+    /// Supports both explicit min/max values and <see cref="ValidateRangeKind"/>.
+    /// </summary>
+    private static void ApplyValidateRange(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta,
+        Type constraintType)
+    {
+        var validateRange = paramMeta.Attributes.OfType<ValidateRangeAttribute>().FirstOrDefault();
+        if (validateRange is null || !IsNumericType(constraintType))
+            return;
+
+        if (validateRange.MinRange is not null && validateRange.MaxRange is not null)
         {
-            property["pattern"] = validatePattern.RegexPattern;
+            property["minimum"] = Convert.ToDouble(validateRange.MinRange, CultureInfo.InvariantCulture);
+            property["maximum"] = Convert.ToDouble(validateRange.MaxRange, CultureInfo.InvariantCulture);
+            return;
         }
 
-        // Prefer Get-Help .PARAMETER description; fall back to the [Parameter(HelpMessage=...)] attribute.
+        var rangeKind = GetRangeKind(validateRange);
+
+        switch (rangeKind)
+        {
+            case ValidateRangeKind.Positive:
+                property["exclusiveMinimum"] = 0d;
+                break;
+            case ValidateRangeKind.NonNegative:
+                property["minimum"] = 0d;
+                break;
+            case ValidateRangeKind.Negative:
+                property["exclusiveMaximum"] = 0d;
+                break;
+            case ValidateRangeKind.NonPositive:
+                property["maximum"] = 0d;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Adds string length constraints from <see cref="ValidateLengthAttribute"/>.
+    /// </summary>
+    private static void ApplyValidateLength(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta,
+        Type paramType)
+    {
+        var validateLength = paramMeta.Attributes.OfType<ValidateLengthAttribute>().FirstOrDefault();
+        if (validateLength is null || paramType != typeof(string))
+            return;
+
+        if (validateLength.MinLength > 0)
+        {
+            property["minLength"] = validateLength.MinLength;
+        }
+
+        property["maxLength"] = validateLength.MaxLength;
+    }
+
+    /// <summary>
+    /// Adds array size constraints from <see cref="ValidateCountAttribute"/>.
+    /// </summary>
+    private static void ApplyValidateCount(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta,
+        Type paramType)
+    {
+        var validateCount = paramMeta.Attributes.OfType<ValidateCountAttribute>().FirstOrDefault();
+        if (validateCount is null || !paramType.IsArray)
+            return;
+
+        if (validateCount.MinLength > 0)
+        {
+            property["minItems"] = validateCount.MinLength;
+        }
+
+        property["maxItems"] = validateCount.MaxLength;
+    }
+
+    /// <summary>
+    /// Adds non-empty constraints from <see cref="ValidateNotNullOrEmptyAttribute"/>
+    /// unless explicitly suppressed by <see cref="AllowEmptyStringAttribute"/> or
+    /// <see cref="AllowEmptyCollectionAttribute"/>.
+    /// </summary>
+    private static void ApplyValidateNotNullOrEmpty(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta,
+        Type paramType)
+    {
+        var validateNotNullOrEmpty = paramMeta.Attributes.OfType<ValidateNotNullOrEmptyAttribute>().FirstOrDefault();
+        if (validateNotNullOrEmpty is null)
+            return;
+
+        if (paramType == typeof(string)
+            && !paramMeta.Attributes.OfType<AllowEmptyStringAttribute>().Any())
+        {
+            property.TryAdd("minLength", 1);
+        }
+
+        if (paramType.IsArray
+            && !paramMeta.Attributes.OfType<AllowEmptyCollectionAttribute>().Any())
+        {
+            property.TryAdd("minItems", 1);
+        }
+    }
+
+    /// <summary>
+    /// Adds nullability union type when <see cref="AllowNullAttribute"/> is present.
+    /// </summary>
+    private static void ApplyAllowNull(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta)
+    {
+        if (!paramMeta.Attributes.OfType<AllowNullAttribute>().Any())
+            return;
+
+        if (property.TryGetValue("type", out var schemaType)
+            && schemaType is string typeName)
+        {
+            property["type"] = new[] { typeName, "null" };
+        }
+    }
+
+    /// <summary>
+    /// Adds a parameter description, preferring Get-Help text and falling back to
+    /// <see cref="ParameterAttribute.HelpMessage"/>.
+    /// </summary>
+    private static void ApplyDescription(
+        Dictionary<string, object?> property,
+        ParameterMetadata paramMeta,
+        string? helpDescription)
+    {
         var description = helpDescription;
 
         if (string.IsNullOrWhiteSpace(description))
@@ -562,8 +724,6 @@ internal sealed class PowerShellToolFactory : IDisposable
         {
             property["description"] = description;
         }
-
-        return property;
     }
 
     /// <summary>
@@ -923,6 +1083,23 @@ internal sealed class PowerShellToolFactory : IDisposable
         if (jf is not null) schema["format"] = jf;
         return schema;
     }
+
+    /// <summary>
+    /// Returns <see langword="true"/> for types that map to a JSON Schema primitive,
+    /// as opposed to complex types that should have their properties reflected.
+    /// </summary>
+    [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "_rangeKind")]
+    private static extern ref ValidateRangeKind? GetRangeKind(ValidateRangeAttribute attribute);
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="type"/> is a numeric CLR primitive.
+    /// </summary>
+    private static bool IsNumericType(Type type) =>
+        type == typeof(int) || type == typeof(long)
+        || type == typeof(short) || type == typeof(uint)
+        || type == typeof(ulong) || type == typeof(byte)
+        || type == typeof(double) || type == typeof(float)
+        || type == typeof(decimal);
 
     /// <summary>
     /// Returns <see langword="true"/> for types that map to a JSON Schema primitive,
