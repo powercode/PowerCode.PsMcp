@@ -418,17 +418,9 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         foreach (var parameterSet in parameterSets)
         {
-            var properties = new Dictionary<string, object?>
-            {
-                ["ParameterSetName"] = new Dictionary<string, object?>
-                {
-                    ["type"] = "string",
-                    ["const"] = parameterSet.Name,
-                    ["description"] = $"Selects the '{parameterSet.Name}' parameter set."
-                }
-            };
+            var properties = new Dictionary<string, object?>();
 
-            var required = new List<string> { "ParameterSetName" };
+            var required = new List<string>();
 
             foreach (var parameterInfo in parameterSet.Parameters)
             {
@@ -451,8 +443,8 @@ internal sealed class PowerShellToolFactory : IDisposable
             variants.Add(new Dictionary<string, object?>
             {
                 ["description"] = parameterSet.IsDefault
-                    ? $"Parameter set '{parameterSet.Name}' (default)"
-                    : $"Parameter set '{parameterSet.Name}'",
+                    ? $"{parameterSet.Name} (default)"
+                    : $"{parameterSet.Name}",
                 ["properties"] = properties,
                 ["required"] = required.ToArray()
             });
