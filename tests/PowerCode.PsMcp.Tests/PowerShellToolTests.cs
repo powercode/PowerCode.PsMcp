@@ -295,12 +295,14 @@ public sealed class PowerShellToolTests : IDisposable
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-EmptyPipeline {
-    [OutputType([string])]
-    param()
-    # Intentionally writes nothing.
-}");
+        ps.AddScript("""
+
+                     function Test-EmptyPipeline {
+                         [OutputType([string])]
+                         param()
+                         # Intentionally writes nothing.
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -308,21 +310,23 @@ function Test-EmptyPipeline {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Get-TestRecord {
-    [OutputType([pscustomobject])]
-    param()
+        ps.AddScript("""
 
-    [pscustomobject]@{
-        Id = 42
-        Name = 'demo'
-        SafeHandle = 'safe-handle'
-        Handle = 'raw-handle'
-        Nested = [pscustomobject]@{
-            Value = 'nested'
-        }
-    }
-}");
+                     function Get-TestRecord {
+                         [OutputType([pscustomobject])]
+                         param()
+
+                         [pscustomobject]@{
+                             Id = 42
+                             Name = 'demo'
+                             SafeHandle = 'safe-handle'
+                             Handle = 'raw-handle'
+                             Nested = [pscustomobject]@{
+                                 Value = 'nested'
+                             }
+                         }
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -330,24 +334,26 @@ function Get-TestRecord {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-MultiSetEcho {
-    [CmdletBinding(DefaultParameterSetName = 'ByName')]
-    param(
-        [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
-        [string]$Name,
+        ps.AddScript("""
 
-        [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
-        [int]$Id
-    )
+                     function Test-MultiSetEcho {
+                         [CmdletBinding(DefaultParameterSetName = 'ByName')]
+                         param(
+                             [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
+                             [string]$Name,
 
-    if ($PSCmdlet.ParameterSetName -eq 'ByName') {
-        Write-Output (""ByName:{0}"" -f $Name)
-        return
-    }
+                             [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
+                             [int]$Id
+                         )
 
-    Write-Output (""ById:{0}"" -f $Id)
-}");
+                         if ($PSCmdlet.ParameterSetName -eq 'ByName') {
+                             Write-Output ("ByName:{0}" -f $Name)
+                             return
+                         }
+
+                         Write-Output ("ById:{0}" -f $Id)
+                     }
+                     """);
         ps.Invoke();
     }
 
