@@ -540,6 +540,13 @@ internal sealed class PowerShellToolFactory : IDisposable
             property["enum"] = validateSet.ValidValues.Cast<object>().ToArray();
         }
 
+        // Expose regex pattern from ValidatePattern attributes.
+        var validatePattern = paramMeta.Attributes.OfType<ValidatePatternAttribute>().FirstOrDefault();
+        if (validatePattern is not null)
+        {
+            property["pattern"] = validatePattern.RegexPattern;
+        }
+
         // Prefer Get-Help .PARAMETER description; fall back to the [Parameter(HelpMessage=...)] attribute.
         var description = helpDescription;
 

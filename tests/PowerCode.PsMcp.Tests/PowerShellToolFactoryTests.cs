@@ -280,6 +280,29 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     }
 
     [TestMethod]
+    public void Create_FunctionWithValidatePattern_AppearsAsPatternInSchema()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-PostalCode {
+                         param(
+                             [Parameter(Mandatory = $true)]
+                             [ValidatePattern('^\d{5}(-\d{4})?$')]
+                             [string]$PostalCode
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var tool = _factory.Create("Test-PostalCode");
+        var properties = tool.ProtocolTool.InputSchema.GetProperty("properties");
+        var pattern = properties.GetProperty("PostalCode").GetProperty("pattern").GetString();
+
+        Assert.AreEqual(@"^\d{5}(-\d{4})?$", pattern);
+    }
+
+    [TestMethod]
     public void Create_AdvancedFunctionWithCommentHelp_MandatoryParametersAreRequired()
     {
         DefineWeatherFunction();
