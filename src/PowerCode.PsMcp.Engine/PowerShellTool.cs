@@ -181,15 +181,54 @@ internal sealed class PowerShellTool : McpServerTool
         {
             await RunCommandAsync(commandPs, commandOutput, cancellationToken).ConfigureAwait(false);
             if (cancellationToken.IsCancellationRequested)
-                return ErrorResult("Tool invocation was cancelled.");
+            {
+                classifier.TextLines.Add("CANCELLED: Tool invocation was cancelled.");
+                serializerInput.Complete();
+                return BuildResult(
+                    serializerInput,
+                    classifier.TextLines,
+                    hasErrors: true,
+                    classifier.ErrorRecords,
+                    parameterSetName);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            return ErrorResult($"Unhandled exception executing '{_commandName}': {ex}");
+            var errorRecord = ex switch
+            {
+                ActionPreferenceStopException actionPreferenceStopException => actionPreferenceStopException.ErrorRecord,
+                CmdletInvocationException cmdletInvocationException => cmdletInvocationException.ErrorRecord,
+                RuntimeException runtimeException => runtimeException.ErrorRecord,
+                _ => null
+            };
+
+            if (errorRecord is not null)
+            {
+                classifier.ErrorRecords.Add(errorRecord);
+            }
+
+            classifier.TextLines.Add($"ERROR: {ex.Message}");
+            if (!string.IsNullOrWhiteSpace(errorRecord?.ScriptStackTrace))
+            {
+                classifier.TextLines.Add(errorRecord.ScriptStackTrace);
+            }
+
+            serializerInput.Complete();
+            return BuildResult(
+                serializerInput,
+                classifier.TextLines,
+                hasErrors: true,
+                classifier.ErrorRecords,
+                parameterSetName);
         }
 
         serializerInput.Complete();
-        return BuildResult(serializerInput, classifier.TextLines, classifier.HasErrors, parameterSetName);
+        return BuildResult(
+            serializerInput,
+            classifier.TextLines,
+            classifier.HasErrors,
+            classifier.ErrorRecords,
+            parameterSetName);
     }
 
     /// <summary>Creates a configured serializer pipeline (Select-Object + ConvertTo-Json).</summary>
@@ -222,23 +261,31 @@ internal sealed class PowerShellTool : McpServerTool
         PSDataCollection<PSObject> serializerInput,
         List<string> textLines,
         bool hasErrors,
+        List<ErrorRecord> errorRecords,
         string? parameterSetName)
     {
         // Produce structured JSON in an {"items": [...]} envelope matching pipeline semantics.
         // When outputSchema is defined, always include structuredContent (even for empty pipelines).
         // serializerPs is created lazily here — only when there are output objects to serialize.
         JsonElement? structuredContent = null;
-        if (serializerInput.Count > 0 || _protocolTool.OutputSchema is not null)
+        if (serializerInput.Count > 0 || _protocolTool.OutputSchema is not null || errorRecords.Count > 0)
         {
-            using var serializerPs = CreateSerializerPs();
-            structuredContent = ConvertToJsonEnvelope(serializerPs, serializerInput, parameterSetName);
+            var itemsElement = serializerInput.Count == 0
+                ? JsonSerializer.SerializeToElement(Array.Empty<object>())
+                : SerializeToJsonArray(CreateSerializerPs(), serializerInput);
+
+            structuredContent = ConvertToJsonEnvelope(itemsElement, parameterSetName, errorRecords);
         }
 
-        var textContent = textLines.Count > 0
-            ? string.Join(Environment.NewLine, textLines)
-            : serializerInput.Count > 0
-                ? string.Join(Environment.NewLine, serializerInput.Select(o => o.ToString()))
-                : "(no output)";
+        var textContent = (textLines.Count, serializerInput.Count) switch
+        {
+            (> 0, > 0) => string.Join(
+                Environment.NewLine,
+                serializerInput.Select(o => o.ToString()).Concat(textLines)),
+            (> 0, _) => string.Join(Environment.NewLine, textLines),
+            (_, > 0) => string.Join(Environment.NewLine, serializerInput.Select(o => o.ToString())),
+            _ => "(no output)"
+        };
 
         return new CallToolResult
         {
@@ -330,14 +377,10 @@ internal sealed class PowerShellTool : McpServerTool
     /// <c>ConvertTo-Json</c> configured; <paramref name="input"/> must be completed.
     /// </summary>
     private static JsonElement ConvertToJsonEnvelope(
-        PowerShell serializerPs,
-        PSDataCollection<PSObject> input,
-        string? parameterSetName)
+        JsonElement itemsElement,
+        string? parameterSetName,
+        List<ErrorRecord> errorRecords)
     {
-        var itemsElement = input.Count == 0
-            ? JsonSerializer.SerializeToElement(Array.Empty<object>())
-            : SerializeToJsonArray(serializerPs, input);
-
         // Wrap the items array in {"items": [...]} to form the envelope root object.
         using var ms = new MemoryStream();
         using (var writer = new Utf8JsonWriter(ms))
@@ -351,6 +394,13 @@ internal sealed class PowerShellTool : McpServerTool
 
             writer.WritePropertyName("items");
             itemsElement.WriteTo(writer);
+
+            if (errorRecords.Count > 0)
+            {
+                writer.WritePropertyName("errors");
+                SerializeErrorRecords(errorRecords).WriteTo(writer);
+            }
+
             writer.WriteEndObject();
         }
 
@@ -363,9 +413,55 @@ internal sealed class PowerShellTool : McpServerTool
     /// </summary>
     private static JsonElement SerializeToJsonArray(PowerShell serializerPs, PSDataCollection<PSObject> input)
     {
-        var jsonText = serializerPs.Invoke<string>(input).First();
+        using (serializerPs)
+        {
+            var jsonText = serializerPs.Invoke<string>(input).First();
 
-        using var doc = JsonDocument.Parse(jsonText);
+            using var doc = JsonDocument.Parse(jsonText);
+            return doc.RootElement.Clone();
+        }
+    }
+
+    private static JsonElement SerializeErrorRecords(List<ErrorRecord> errors)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(ms))
+        {
+            writer.WriteStartArray();
+            foreach (var errorRecord in errors)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("message", errorRecord.Exception?.Message ?? errorRecord.ToString());
+                if (errorRecord.Exception is not null)
+                {
+                    writer.WriteString("exceptionType", errorRecord.Exception.GetType().FullName);
+                }
+
+                writer.WriteString("errorId", errorRecord.FullyQualifiedErrorId);
+                writer.WriteString("category", errorRecord.CategoryInfo.Category.ToString());
+
+                if (!string.IsNullOrWhiteSpace(errorRecord.CategoryInfo.TargetName))
+                {
+                    writer.WriteString("targetName", errorRecord.CategoryInfo.TargetName);
+                }
+
+                if (!string.IsNullOrWhiteSpace(errorRecord.ScriptStackTrace))
+                {
+                    writer.WriteString("scriptStackTrace", errorRecord.ScriptStackTrace);
+                }
+
+                if (!string.IsNullOrWhiteSpace(errorRecord.InvocationInfo?.Line))
+                {
+                    writer.WriteString("invocationLine", errorRecord.InvocationInfo.Line.Trim());
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+
+        using var doc = JsonDocument.Parse(ms.ToArray());
         return doc.RootElement.Clone();
     }
 
@@ -387,13 +483,6 @@ internal sealed class PowerShellTool : McpServerTool
             _ => null
         };
 
-    private static CallToolResult ErrorResult(string message) =>
-        new()
-        {
-            Content = [new TextContentBlock { Text = message }],
-            IsError = true
-        };
-
     // ── Nested types ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -404,6 +493,7 @@ internal sealed class PowerShellTool : McpServerTool
     private sealed class PipelineClassifier(PSDataCollection<PSObject> serializerInput, ILogger logger)
     {
         public List<string> TextLines { get; } = [];
+        public List<ErrorRecord> ErrorRecords { get; } = [];
         public bool HasErrors { get; private set; }
 
         public void OnDataAdded(object? sender, DataAddedEventArgs e)
@@ -415,6 +505,7 @@ internal sealed class PowerShellTool : McpServerTool
             {
                 case ErrorRecord er:
                     HasErrors = true;
+                    ErrorRecords.Add(er);
                     var errorMessage = er.Exception?.Message ?? er.ToString();
                     TextLines.Add($"ERROR: {errorMessage}");
                     logger.Log(LogLevel.Error, 0, errorMessage, er.Exception, static (s, _) => s);

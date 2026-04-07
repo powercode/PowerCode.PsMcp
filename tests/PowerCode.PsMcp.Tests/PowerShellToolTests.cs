@@ -115,6 +115,89 @@ public sealed class PowerShellToolTests : IDisposable
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);
 
         Assert.IsTrue(result.IsError, "Write-Error should produce an error result.");
+        Assert.IsNotNull(result.StructuredContent, "Write-Error should include structured error content.");
+        var errors = result.StructuredContent.Value.GetProperty("errors");
+        Assert.AreEqual(JsonValueKind.Array, errors.ValueKind);
+        Assert.IsGreaterThan(0, errors.GetArrayLength(), "Expected at least one structured error.");
+        Assert.Contains("deliberate-test-error", errors[0].GetProperty("message").GetString()!);
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithWriteError_StructuredContentContainsErrorDetails()
+    {
+        var tool = _factory.Create("Write-Error");
+        var args = new Dictionary<string, JsonElement>
+        {
+            ["Message"] = JsonSerializer.SerializeToElement("structured-non-terminating-error")
+        };
+        var ctx = BuildContext(tool, args);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsTrue(result.IsError);
+        Assert.IsNotNull(result.StructuredContent);
+
+        var errors = result.StructuredContent.Value.GetProperty("errors");
+        Assert.AreEqual(JsonValueKind.Array, errors.ValueKind);
+        Assert.IsGreaterThan(0, errors.GetArrayLength());
+
+        var firstError = errors[0];
+        Assert.IsTrue(firstError.TryGetProperty("errorId", out var errorId));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(errorId.GetString()));
+        Assert.IsTrue(firstError.TryGetProperty("category", out var category));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(category.GetString()));
+
+        var text = ((TextContentBlock)result.Content[0]).Text;
+        Assert.Contains("ERROR:", text);
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithTerminatingError_StructuredContentContainsErrorDetails()
+    {
+        DefineThrowingFunction();
+
+        var tool = _factory.Create("Test-ThrowingError");
+        var ctx = BuildContext(tool, arguments: null);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsTrue(result.IsError);
+        Assert.IsNotNull(result.StructuredContent);
+
+        var items = result.StructuredContent.Value.GetProperty("items");
+        Assert.AreEqual(JsonValueKind.Array, items.ValueKind);
+
+        var errors = result.StructuredContent.Value.GetProperty("errors");
+        Assert.AreEqual(JsonValueKind.Array, errors.ValueKind);
+        Assert.IsGreaterThan(0, errors.GetArrayLength());
+        Assert.IsTrue(errors[0].TryGetProperty("message", out var errorMessage));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(errorMessage.GetString()));
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithMixedOutputAndErrors_StructuredContentContainsBoth()
+    {
+        DefineMixedOutputFunction();
+
+        var tool = _factory.Create("Test-MixedOutputAndError");
+        var ctx = BuildContext(tool, arguments: null);
+
+        var result = await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        Assert.IsTrue(result.IsError);
+        Assert.IsNotNull(result.StructuredContent);
+
+        var items = result.StructuredContent.Value.GetProperty("items");
+        Assert.AreEqual(JsonValueKind.Array, items.ValueKind);
+        Assert.IsGreaterThan(0, items.GetArrayLength());
+
+        var errors = result.StructuredContent.Value.GetProperty("errors");
+        Assert.AreEqual(JsonValueKind.Array, errors.ValueKind);
+        Assert.IsGreaterThan(0, errors.GetArrayLength());
+
+        var text = ((TextContentBlock)result.Content[0]).Text;
+        Assert.Contains("mixed-output-item", text);
+        Assert.Contains("ERROR:", text);
     }
 
     [TestMethod]
@@ -325,6 +408,39 @@ public sealed class PowerShellToolTests : IDisposable
                                  Value = 'nested'
                              }
                          }
+                     }
+                     """);
+        ps.Invoke();
+    }
+
+    private void DefineThrowingFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+
+                     function Test-ThrowingError {
+                         [OutputType([string])]
+                         param()
+
+                         throw 'deliberate-terminating-error'
+                     }
+                     """);
+        ps.Invoke();
+    }
+
+    private void DefineMixedOutputFunction()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+
+                     function Test-MixedOutputAndError {
+                         [OutputType([string])]
+                         param()
+
+                         Write-Output 'mixed-output-item'
+                         Write-Error 'mixed-error-item'
                      }
                      """);
         ps.Invoke();
