@@ -247,8 +247,7 @@ public sealed class PowerShellToolFactoryTests : IDisposable
         Assert.IsNotNull(tool.ProtocolTool.Description);
         Assert.Contains("Syntax:", tool.ProtocolTool.Description);
         Assert.Contains("[-location]", tool.ProtocolTool.Description);
-        StringAssert.DoesNotMatch(tool.ProtocolTool.Description,
-            new System.Text.RegularExpressions.Regex("Examples:"));
+        Assert.DoesNotMatchRegex(new System.Text.RegularExpressions.Regex("Examples:"), tool.ProtocolTool.Description);
     }
 
     [TestMethod]
@@ -305,8 +304,8 @@ public sealed class PowerShellToolFactoryTests : IDisposable
         Assert.Contains("Gets the current date and time", description);
         Assert.Contains("Syntax:", description);
         Assert.Contains("[-Format <string>]", description);
-        StringAssert.DoesNotMatch(description,
-            new System.Text.RegularExpressions.Regex("Examples:"));
+        Assert.DoesNotMatchRegex(new System.Text.RegularExpressions.Regex("Examples:"),
+description);
         Assert.IsLessThan(1000, description.Length,
             $"Expected description length < 1000 but was {description.Length}");
     }
