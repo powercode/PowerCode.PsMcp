@@ -15,8 +15,8 @@ namespace PowerCode.PsMcp.Tests;
 [TestCategory("Unit")]
 public sealed class PowerShellToolTests : IDisposable
 {
-    private static readonly string[] IncludedProperties = ["Id", "Name"];
-    private static readonly string[] ExcludedProperties = ["SafeHandle", "Handle"];
+    private static readonly string[] s_includedProperties = ["Id", "Name"];
+    private static readonly string[] s_excludedProperties = ["SafeHandle", "Handle"];
 
     private readonly Runspace _runspace;
     private readonly PowerShellToolFactory _factory;
@@ -318,7 +318,7 @@ public sealed class PowerShellToolTests : IDisposable
     {
         DefinePropertySelectionFunction();
 
-        var tool = _factory.Create("Get-TestRecord", new McpToolConfig { Property = IncludedProperties });
+        var tool = _factory.Create("Get-TestRecord", new McpToolConfig { Property = s_includedProperties });
         var ctx = BuildContext(tool, arguments: null);
 
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);
@@ -327,8 +327,8 @@ public sealed class PowerShellToolTests : IDisposable
         var item = result.StructuredContent.Value.GetProperty("items")[0];
         var propertyNames = item.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
 
-        Assert.HasCount(IncludedProperties.Length, propertyNames);
-        foreach (var propertyName in IncludedProperties)
+        Assert.HasCount(s_includedProperties.Length, propertyNames);
+        foreach (var propertyName in s_includedProperties)
         {
             Assert.Contains(propertyName, propertyNames);
         }
@@ -341,7 +341,7 @@ public sealed class PowerShellToolTests : IDisposable
     {
         DefinePropertySelectionFunction();
 
-        var tool = _factory.Create("Get-TestRecord", new McpToolConfig { ExcludeProperty = ExcludedProperties });
+        var tool = _factory.Create("Get-TestRecord", new McpToolConfig { ExcludeProperty = s_excludedProperties });
         var ctx = BuildContext(tool, arguments: null);
 
         var result = await tool.InvokeAsync(ctx, CancellationToken.None);

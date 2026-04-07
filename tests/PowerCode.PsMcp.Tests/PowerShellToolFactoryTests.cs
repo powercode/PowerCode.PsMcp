@@ -13,8 +13,8 @@ namespace PowerCode.PsMcp.Tests;
 [TestCategory("Unit")]
 public sealed class PowerShellToolFactoryTests : IDisposable
 {
-    private static readonly string[] ByNameRequired = ["ParameterSetName", "Name"];
-    private static readonly string[] ByIdRequired = ["ParameterSetName", "Id"];
+    private static readonly string[] s_byNameRequired = ["ParameterSetName", "Name"];
+    private static readonly string[] s_byIdRequired = ["ParameterSetName", "Id"];
 
     private readonly Runspace _runspace;
     private readonly PowerShellToolFactory _factory;

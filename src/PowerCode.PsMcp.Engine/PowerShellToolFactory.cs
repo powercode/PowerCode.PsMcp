@@ -40,7 +40,7 @@ internal sealed class PowerShellToolFactory : IDisposable
     private readonly SemaphoreSlim _runspaceLock = new(1, 1);
 
     // Common PS parameters that are never exposed as MCP tool parameters.
-    private static readonly HashSet<string> CommonParameters = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> s_commonParameters = new(StringComparer.OrdinalIgnoreCase)
     {
         "Verbose", "Debug", "ErrorAction", "WarningAction", "InformationAction",
         "ErrorVariable", "WarningVariable", "InformationVariable", "OutVariable",
@@ -48,13 +48,13 @@ internal sealed class PowerShellToolFactory : IDisposable
     };
 
     // Types that are security-sensitive and must be excluded from the MCP schema.
-    private static readonly HashSet<Type> ExcludedTypes =
+    private static readonly HashSet<Type> s_excludedTypes =
     [
         typeof(PSCredential),
         typeof(System.Security.SecureString)
     ];
 
-    private static readonly string[] OutputVariantRequiredProperties = ["ParameterSetName", "items"];
+    private static readonly string[] s_outputVariantRequiredProperties = ["ParameterSetName", "items"];
 
     /// <summary>
     /// Initialises a new factory backed by <paramref name="runspace"/>.
@@ -369,11 +369,11 @@ internal sealed class PowerShellToolFactory : IDisposable
         foreach (var (paramName, paramMeta) in commandInfo.Parameters)
         {
             // Skip common/automatic parameters.
-            if (CommonParameters.Contains(paramName))
+            if (s_commonParameters.Contains(paramName))
                 continue;
 
             // Exclude security-sensitive parameter types.
-            if (ExcludedTypes.Contains(paramMeta.ParameterType))
+            if (s_excludedTypes.Contains(paramMeta.ParameterType))
                 continue;
 
             // When a parameter-set filter is active, skip parameters not in any of the chosen sets.
@@ -432,13 +432,13 @@ internal sealed class PowerShellToolFactory : IDisposable
 
             foreach (var parameterInfo in parameterSet.Parameters)
             {
-                if (CommonParameters.Contains(parameterInfo.Name))
+                if (s_commonParameters.Contains(parameterInfo.Name))
                     continue;
 
                 if (!commandInfo.Parameters.TryGetValue(parameterInfo.Name, out var paramMeta))
                     continue;
 
-                if (ExcludedTypes.Contains(paramMeta.ParameterType))
+                if (s_excludedTypes.Contains(paramMeta.ParameterType))
                     continue;
 
                 parameterDescriptions.TryGetValue(parameterInfo.Name, out var helpDescription);
@@ -654,7 +654,7 @@ internal sealed class PowerShellToolFactory : IDisposable
                         ["items"] = BuildArrayItemsSchema(setTypes.Select(static typeName => typeName.Type).ToArray())
                     }
                 },
-                ["required"] = OutputVariantRequiredProperties
+                ["required"] = s_outputVariantRequiredProperties
             });
         }
 
