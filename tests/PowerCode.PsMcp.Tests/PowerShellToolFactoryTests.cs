@@ -701,11 +701,11 @@ description);
 
         Assert.Contains("ParameterSetName", byNameRequired);
         Assert.Contains("Name", byNameRequired);
-        CollectionAssert.DoesNotContain(byNameRequired, "Id");
+        Assert.DoesNotContain("Id", byNameRequired );
 
         Assert.Contains("ParameterSetName", byIdRequired);
         Assert.Contains("Id", byIdRequired);
-        CollectionAssert.DoesNotContain(byIdRequired, "Name");
+        Assert.DoesNotContain("Name", byIdRequired);
     }
 
     [TestMethod]
@@ -748,7 +748,7 @@ description);
             .EnumerateArray()
             .Select(element => element.GetString())
             .ToList();
-
+        
         CollectionAssert.AreEquivalent(s_byNameRequired, byNameRequired);
         CollectionAssert.AreEquivalent(s_byIdRequired, byIdRequired);
     }
