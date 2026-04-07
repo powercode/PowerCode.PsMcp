@@ -156,16 +156,18 @@ public sealed class PowerShellToolFactoryTests : IDisposable
         // explicitly part of, or every mandatory param would incorrectly appear required.
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Get-ProcessFileVersion {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
-        [string[]] $Name,
-        [Parameter(Mandatory = $true, ParameterSetName = 'Id')]
-        [int[]] $Id
-    )
-}");
+        ps.AddScript("""
+
+                     function Get-ProcessFileVersion {
+                         [CmdletBinding()]
+                         param(
+                             [Parameter(Mandatory = $true, ParameterSetName = 'Name')]
+                             [string[]] $Name,
+                             [Parameter(Mandatory = $true, ParameterSetName = 'Id')]
+                             [int[]] $Id
+                         )
+                     }
+                     """);
         ps.Invoke();
 
         var tool = _factory.Create("Get-ProcessFileVersion");
@@ -196,29 +198,31 @@ function Get-ProcessFileVersion {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Get-CurrentWeather {
-    <#
-    .SYNOPSIS
-        Retrieves the current weather for a specified location.
-    .DESCRIPTION
-        The Get-CurrentWeather function queries weather data for a given location.
-    .PARAMETER location
-        The name of the location (city, country, etc.) to retrieve weather for.
-    .PARAMETER unit
-        The temperature unit to use. Valid values are 'celsius' and 'fahrenheit'.
-    .EXAMPLE
-        Get-CurrentWeather -location ""New York"" -unit ""celsius""
-        Retrieves the current weather for New York in Celsius.
-    #>
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$location,
-        [Parameter(Mandatory = $true)]
-        [ValidateSet('celsius', 'fahrenheit')]
-        [string]$unit
-    )
-}");
+        ps.AddScript("""
+
+                     function Get-CurrentWeather {
+                         <#
+                         .SYNOPSIS
+                             Retrieves the current weather for a specified location.
+                         .DESCRIPTION
+                             The Get-CurrentWeather function queries weather data for a given location.
+                         .PARAMETER location
+                             The name of the location (city, country, etc.) to retrieve weather for.
+                         .PARAMETER unit
+                             The temperature unit to use. Valid values are 'celsius' and 'fahrenheit'.
+                         .EXAMPLE
+                             Get-CurrentWeather -location "New York" -unit "celsius"
+                             Retrieves the current weather for New York in Celsius.
+                         #>
+                         param(
+                             [Parameter(Mandatory = $true)]
+                             [string]$location,
+                             [Parameter(Mandatory = $true)]
+                             [ValidateSet('celsius', 'fahrenheit')]
+                             [string]$unit
+                         )
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -313,13 +317,15 @@ function Get-CurrentWeather {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-HelpMessageFallback {
-    param(
-        [Parameter(Mandatory = $true, HelpMessage = 'The name to greet')]
-        [string]$Name
-    )
-}");
+        ps.AddScript("""
+
+                     function Test-HelpMessageFallback {
+                         param(
+                             [Parameter(Mandatory = $true, HelpMessage = 'The name to greet')]
+                             [string]$Name
+                         )
+                     }
+                     """);
         ps.Invoke();
 
         var tool = _factory.Create("Test-HelpMessageFallback");
@@ -337,17 +343,19 @@ function Test-HelpMessageFallback {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-HelpPriority {
-    <#
-    .PARAMETER Name
-        The full name of the person from comment-based help.
-    #>
-    param(
-        [Parameter(Mandatory = $true, HelpMessage = 'HelpMessage attribute value')]
-        [string]$Name
-    )
-}");
+        ps.AddScript("""
+
+                     function Test-HelpPriority {
+                         <#
+                         .PARAMETER Name
+                             The full name of the person from comment-based help.
+                         #>
+                         param(
+                             [Parameter(Mandatory = $true, HelpMessage = 'HelpMessage attribute value')]
+                             [string]$Name
+                         )
+                     }
+                     """);
         ps.Invoke();
 
         var tool = _factory.Create("Test-HelpPriority");
@@ -378,12 +386,14 @@ function Test-HelpPriority {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-StringOutput {
-    [OutputType([string])]
-    param()
-    'hello'
-}");
+        ps.AddScript("""
+
+                     function Test-StringOutput {
+                         [OutputType([string])]
+                         param()
+                         'hello'
+                     }
+                     """);
         ps.Invoke();
 
         var tool = _factory.Create("Test-StringOutput");
@@ -401,12 +411,14 @@ function Test-StringOutput {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-IntOutput {
-    [OutputType([int])]
-    param()
-    42
-}");
+        ps.AddScript("""
+
+                     function Test-IntOutput {
+                         [OutputType([int])]
+                         param()
+                         42
+                     }
+                     """);
         ps.Invoke();
 
         var tool = _factory.Create("Test-IntOutput");
@@ -536,12 +548,13 @@ function Test-IntOutput {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-SingleSetOutput {
-    [OutputType([string])]
-    param([string]$Name)
-    $Name
-}");
+        ps.AddScript("""
+                     function Test-SingleSetOutput {
+                         [OutputType([string])]
+                         param([string]$Name)
+                         $Name
+                     }
+                     """);
         ps.Invoke();
 
         var tool = _factory.Create("Test-SingleSetOutput");
@@ -634,21 +647,23 @@ function Test-SingleSetOutput {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-MultiSet {
-    <#
-    .SYNOPSIS
-        A command with two parameter sets.
-    #>
-    [CmdletBinding(DefaultParameterSetName = 'ByName')]
-    param(
-        [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
-        [string]$Name,
+        ps.AddScript("""
 
-        [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
-        [int]$Id
-    )
-}");
+                     function Test-MultiSet {
+                         <#
+                         .SYNOPSIS
+                             A command with two parameter sets.
+                         #>
+                         [CmdletBinding(DefaultParameterSetName = 'ByName')]
+                         param(
+                             [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
+                             [string]$Name,
+
+                             [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
+                             [int]$Id
+                         )
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -913,19 +928,21 @@ function Test-MultiSet {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-MultiSetWithShared {
-    [CmdletBinding(DefaultParameterSetName = 'ByName')]
-    param(
-        [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
-        [string]$Name,
+        ps.AddScript("""
 
-        [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
-        [int]$Id,
+                     function Test-MultiSetWithShared {
+                         [CmdletBinding(DefaultParameterSetName = 'ByName')]
+                         param(
+                             [Parameter(ParameterSetName = 'ByName', Mandatory = $true)]
+                             [string]$Name,
 
-        [switch]$Force
-    )
-}");
+                             [Parameter(ParameterSetName = 'ById', Mandatory = $true)]
+                             [int]$Id,
+
+                             [switch]$Force
+                         )
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -933,22 +950,24 @@ function Test-MultiSetWithShared {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-OutputPerSet {
-    [CmdletBinding(DefaultParameterSetName='ByName')]
-    [OutputType([string], ParameterSetName='ByName')]
-    [OutputType([int], ParameterSetName='ById')]
-    param(
-        [Parameter(Mandatory, ParameterSetName='ByName')]
-        [string]$Name,
+        ps.AddScript("""
 
-        [Parameter(Mandatory, ParameterSetName='ById')]
-        [int]$Id
-    )
+                     function Test-OutputPerSet {
+                         [CmdletBinding(DefaultParameterSetName='ByName')]
+                         [OutputType([string], ParameterSetName='ByName')]
+                         [OutputType([int], ParameterSetName='ById')]
+                         param(
+                             [Parameter(Mandatory, ParameterSetName='ByName')]
+                             [string]$Name,
 
-    if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
-    $Id
-}");
+                             [Parameter(Mandatory, ParameterSetName='ById')]
+                             [int]$Id
+                         )
+
+                         if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
+                         $Id
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -956,22 +975,24 @@ function Test-OutputPerSet {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-OutputAllSets {
-    [CmdletBinding(DefaultParameterSetName='ByName')]
-    [OutputType([string])]
-    [OutputType([int])]
-    param(
-        [Parameter(Mandatory, ParameterSetName='ByName')]
-        [string]$Name,
+        ps.AddScript("""
 
-        [Parameter(Mandatory, ParameterSetName='ById')]
-        [int]$Id
-    )
+                     function Test-OutputAllSets {
+                         [CmdletBinding(DefaultParameterSetName='ByName')]
+                         [OutputType([string])]
+                         [OutputType([int])]
+                         param(
+                             [Parameter(Mandatory, ParameterSetName='ByName')]
+                             [string]$Name,
 
-    if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
-    $Id
-}");
+                             [Parameter(Mandatory, ParameterSetName='ById')]
+                             [int]$Id
+                         )
+
+                         if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
+                         $Id
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -979,22 +1000,24 @@ function Test-OutputAllSets {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-OutputPartialSets {
-    [CmdletBinding(DefaultParameterSetName='ByName')]
-    [OutputType([string], ParameterSetName='ByName')]
-    [OutputType([hashtable])]
-    param(
-        [Parameter(Mandatory, ParameterSetName='ByName')]
-        [string]$Name,
+        ps.AddScript("""
 
-        [Parameter(Mandatory, ParameterSetName='ById')]
-        [int]$Id
-    )
+                     function Test-OutputPartialSets {
+                         [CmdletBinding(DefaultParameterSetName='ByName')]
+                         [OutputType([string], ParameterSetName='ByName')]
+                         [OutputType([hashtable])]
+                         param(
+                             [Parameter(Mandatory, ParameterSetName='ByName')]
+                             [string]$Name,
 
-    if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
-    @{ Id = $Id }
-}");
+                             [Parameter(Mandatory, ParameterSetName='ById')]
+                             [int]$Id
+                         )
+
+                         if ($PSCmdlet.ParameterSetName -eq 'ByName') { $Name; return }
+                         @{ Id = $Id }
+                     }
+                     """);
         ps.Invoke();
     }
 
@@ -1002,17 +1025,19 @@ function Test-OutputPartialSets {
     {
         using var ps = PowerShell.Create();
         ps.Runspace = _runspace;
-        ps.AddScript(@"
-function Test-OutputMultiTypePerSet {
-    [CmdletBinding(DefaultParameterSetName='Multi')]
-    [OutputType([string], [int], ParameterSetName='Multi')]
-    param(
-        [Parameter(Mandatory, ParameterSetName='Multi')]
-        [string]$Input
-    )
+        ps.AddScript("""
 
-    $Input
-}");
+                     function Test-OutputMultiTypePerSet {
+                         [CmdletBinding(DefaultParameterSetName='Multi')]
+                         [OutputType([string], [int], ParameterSetName='Multi')]
+                         param(
+                             [Parameter(Mandatory, ParameterSetName='Multi')]
+                             [string]$Input
+                         )
+
+                         $Input
+                     }
+                     """);
         ps.Invoke();
     }
 
