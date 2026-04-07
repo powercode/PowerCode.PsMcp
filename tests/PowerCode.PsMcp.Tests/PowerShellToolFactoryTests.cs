@@ -275,8 +275,8 @@ public sealed class PowerShellToolFactoryTests : IDisposable
             .Select(e => e.GetString())
             .ToList();
 
-        CollectionAssert.Contains(enumValues, "celsius");
-        CollectionAssert.Contains(enumValues, "fahrenheit");
+        Assert.Contains("celsius", enumValues);
+        Assert.Contains("fahrenheit", enumValues);
     }
 
     [TestMethod]
@@ -290,8 +290,8 @@ public sealed class PowerShellToolFactoryTests : IDisposable
             .Select(e => e.GetString())
             .ToList();
 
-        CollectionAssert.Contains(required, "location");
-        CollectionAssert.Contains(required, "unit");
+        Assert.Contains("location", required);
+        Assert.Contains("unit", required);
     }
     [TestMethod]
     [TestCategory("LocalHelpInstalled")]
@@ -513,8 +513,8 @@ description);
             .Select(item => item.GetProperty("type").GetString())
             .ToList();
 
-        CollectionAssert.Contains(itemTypes, "string");
-        CollectionAssert.Contains(itemTypes, "integer");
+        Assert.Contains("string", itemTypes);
+        Assert.Contains("integer", itemTypes);
     }
 
     [TestMethod]
@@ -585,8 +585,8 @@ description);
         var types = oneOf.EnumerateArray()
             .Select(item => item.GetProperty("type").GetString())
             .ToList();
-        CollectionAssert.Contains(types, "string");
-        CollectionAssert.Contains(types, "integer");
+        Assert.Contains("string", types);
+        Assert.Contains("integer", types);
     }
 
     [TestMethod]
@@ -699,12 +699,12 @@ description);
             .Select(element => element.GetString())
             .ToList();
 
-        CollectionAssert.Contains(byNameRequired, "ParameterSetName");
-        CollectionAssert.Contains(byNameRequired, "Name");
+        Assert.Contains("ParameterSetName", byNameRequired);
+        Assert.Contains("Name", byNameRequired);
         CollectionAssert.DoesNotContain(byNameRequired, "Id");
 
-        CollectionAssert.Contains(byIdRequired, "ParameterSetName");
-        CollectionAssert.Contains(byIdRequired, "Id");
+        Assert.Contains("ParameterSetName", byIdRequired);
+        Assert.Contains("Id", byIdRequired);
         CollectionAssert.DoesNotContain(byIdRequired, "Name");
     }
 
@@ -749,8 +749,8 @@ description);
             .Select(element => element.GetString())
             .ToList();
 
-        CollectionAssert.AreEquivalent(ByNameRequired, byNameRequired);
-        CollectionAssert.AreEquivalent(ByIdRequired, byIdRequired);
+        CollectionAssert.AreEquivalent(s_byNameRequired, byNameRequired);
+        CollectionAssert.AreEquivalent(s_byIdRequired, byIdRequired);
     }
 
     [TestMethod]
@@ -827,8 +827,8 @@ description);
             .ToList();
 
         // When only ByName is active, Name is mandatory in every active set → required.
-        CollectionAssert.Contains(required, "Name");
-        CollectionAssert.DoesNotContain(required, "Id");
+        Assert.Contains("Name", required);
+        Assert.DoesNotContain("Id", required);
     }
 
     [TestMethod]
@@ -917,10 +917,10 @@ description);
             .Select(element => element.GetString())
             .ToList();
 
-        CollectionAssert.Contains(nameRequired, "ParameterSetName");
-        CollectionAssert.Contains(idRequired, "ParameterSetName");
-        CollectionAssert.DoesNotContain(nameRequired, "Id");
-        CollectionAssert.DoesNotContain(idRequired, "Name");
+        Assert.Contains("ParameterSetName", nameRequired);
+        Assert.Contains("ParameterSetName", idRequired);
+        Assert.DoesNotContain("Id", nameRequired);
+        Assert.DoesNotContain("Name", idRequired);
     }
 
     private void DefineMultiSetWithSharedFunction()
