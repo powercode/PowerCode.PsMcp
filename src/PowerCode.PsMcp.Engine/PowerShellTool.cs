@@ -334,7 +334,7 @@ internal sealed partial class PowerShellTool : McpServerTool
                 PipelineResultTypes.Output);
         }
 
-            return parameterSetName;
+        return parameterSetName;
     }
 
     /// <summary>
@@ -537,13 +537,10 @@ internal sealed partial class PowerShellTool : McpServerTool
                     break;
 
                 default:
-                    if (logger.IsEnabled(LogLevel.Debug))
-                    {
-                        // Log command output records only when diagnostic logging is enabled.
+                    // Log command output records only when diagnostic logging is enabled.
 #pragma warning disable CA1873 // Value is computed only when Debug logging is enabled.
-                        LogMessages.CommandOutputRecord(logger, result.ToString() ?? string.Empty);
+                    LogMessages.CommandOutputRecord(logger, result.ToString() ?? string.Empty);
 #pragma warning restore CA1873
-                    }
 
                     serializerInput.Add(result);
                     break;
@@ -567,8 +564,17 @@ internal sealed partial class PowerShellTool : McpServerTool
             [LoggerMessage(EventId = 3004, Level = LogLevel.Information, Message = "{message}")]
             public static partial void InformationRecord(ILogger logger, string message);
 
-            [LoggerMessage(EventId = 3005, Level = LogLevel.Debug, Message = "{message}")]
+            [LoggerMessage(EventId = 3005, Level = LogLevel.Debug, Message = "{message}", SkipEnabledCheck = true)]
             public static partial void CommandOutputRecord(ILogger logger, string message);
+
+            public static void CommandOutputRecord(ILogger logger, object? output)
+            {
+                if (logger.IsEnabled(LogLevel.Debug))
+                {
+                    string message = output?.ToString() ?? string.Empty;
+                    CommandOutputRecord(logger, message: message);
+                }
+            }
         }
     }
 
