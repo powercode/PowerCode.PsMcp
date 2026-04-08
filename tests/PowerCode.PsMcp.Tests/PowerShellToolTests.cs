@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -216,6 +217,50 @@ public sealed class PowerShellToolTests : IDisposable
 
         var text = ((TextContentBlock)result.Content[0]).Text;
         Assert.Contains("hello-from-test", text);
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithOutputCommand_LogsOutputAtDebugLevel()
+    {
+        var loggerProvider = new TestLoggerProvider();
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Debug);
+            builder.AddProvider(loggerProvider);
+        });
+
+        using var serializerInput = new PSDataCollection<PSObject>();
+        var classifierType = typeof(PowerShellTool)
+            .GetNestedType("PipelineClassifier", System.Reflection.BindingFlags.NonPublic);
+
+        Assert.IsNotNull(classifierType, "Expected nested PipelineClassifier type.");
+
+        var classifier = Activator.CreateInstance(
+            classifierType,
+            serializerInput,
+            loggerFactory.CreateLogger("test-command"));
+
+        Assert.IsNotNull(classifier, "Expected PipelineClassifier instance.");
+
+        var onDataAdded = classifierType.GetMethod("OnDataAdded", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        Assert.IsNotNull(onDataAdded, "Expected OnDataAdded method.");
+
+        using var commandOutput = new PSDataCollection<PSObject>();
+        var handler = (EventHandler<DataAddedEventArgs>)Delegate.CreateDelegate(
+            typeof(EventHandler<DataAddedEventArgs>),
+            classifier,
+            onDataAdded);
+        commandOutput.DataAdded += handler;
+        commandOutput.Add(new PSObject("debug-log-output"));
+        commandOutput.DataAdded -= handler;
+
+        var debugLogText = string.Join(
+            Environment.NewLine,
+            loggerProvider.Entries
+                .Where(entry => entry.Level == LogLevel.Debug)
+                .Select(entry => entry.Message));
+
+        Assert.Contains("debug-log-output", debugLogText, StringComparison.Ordinal);
     }
 
     [TestMethod]
@@ -488,4 +533,55 @@ public sealed class PowerShellToolTests : IDisposable
         };
         return new RequestContext<CallToolRequestParams>(_dummyServer, jsonRpcRequest, callParams);
     }
+
+    private sealed class TestLoggerProvider : ILoggerProvider
+    {
+        private readonly object _syncRoot = new();
+
+        public List<LogEntry> Entries { get; } = [];
+
+        public ILogger CreateLogger(string categoryName) => new TestLogger(this, categoryName);
+
+        public void Dispose()
+        {
+        }
+
+        public void Clear()
+        {
+            lock (_syncRoot)
+            {
+                Entries.Clear();
+            }
+        }
+
+        private void Add(LogEntry entry)
+        {
+            lock (_syncRoot)
+            {
+                Entries.Add(entry);
+            }
+        }
+
+        private sealed class TestLogger(TestLoggerProvider provider, string categoryName) : ILogger
+        {
+            private readonly TestLoggerProvider _provider = provider;
+            private readonly string _categoryName = categoryName;
+
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                _provider.Add(new LogEntry(_categoryName, logLevel, formatter(state, exception)));
+            }
+        }
+    }
+
+    private sealed record LogEntry(string Category, LogLevel Level, string Message);
 }

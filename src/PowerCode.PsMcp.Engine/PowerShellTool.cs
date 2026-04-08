@@ -48,7 +48,7 @@ namespace PowerCode.PsMcp;
 /// PowerShell pipeline semantics of zero-or-more output objects.
 /// </para>
 /// </remarks>
-internal sealed class PowerShellTool : McpServerTool
+internal sealed partial class PowerShellTool : McpServerTool
 {
     private readonly string _commandName;
     private readonly Tool _protocolTool;
@@ -490,7 +490,7 @@ internal sealed class PowerShellTool : McpServerTool
     /// Diagnostic records are logged and added to <see cref="TextLines"/>; true output
     /// objects are forwarded to the serializer input collection.
     /// </summary>
-    private sealed class PipelineClassifier(PSDataCollection<PSObject> serializerInput, ILogger logger)
+    private sealed partial class PipelineClassifier(PSDataCollection<PSObject> serializerInput, ILogger logger)
     {
         public List<string> TextLines { get; } = [];
         public List<ErrorRecord> ErrorRecords { get; } = [];
@@ -508,7 +508,7 @@ internal sealed class PowerShellTool : McpServerTool
                     ErrorRecords.Add(er);
                     var errorMessage = er.Exception?.Message ?? er.ToString();
                     TextLines.Add($"ERROR: {errorMessage}");
-                    logger.Log(LogLevel.Error, 0, errorMessage, er.Exception, static (s, _) => s);
+                    LogMessages.ErrorRecord(logger, errorMessage, er.Exception);
                     break;
 
                 case ProgressRecord:
@@ -517,29 +517,58 @@ internal sealed class PowerShellTool : McpServerTool
 
                 case VerboseRecord vr:
                     TextLines.Add($"VERBOSE: {vr.Message}");
-                    logger.Log(LogLevel.Information, 0, vr.Message, null, static (s, _) => s);
+                    LogMessages.VerboseRecord(logger, vr.Message);
                     break;
 
                 case WarningRecord wr:
                     TextLines.Add($"WARNING: {wr.Message}");
-                    logger.Log(LogLevel.Warning, 0, wr.Message, null, static (s, _) => s);
+                    LogMessages.WarningRecord(logger, wr.Message);
                     break;
 
                 case DebugRecord dr:
                     TextLines.Add($"DEBUG: {dr.Message}");
-                    logger.Log(LogLevel.Trace, 0, dr.Message, null, static (s, _) => s);
+                    LogMessages.DebugRecord(logger, dr.Message);
                     break;
 
                 case InformationRecord ir:
                     var infoText = ir.MessageData?.ToString() ?? string.Empty;
                     TextLines.Add($"INFO: {infoText}");
-                    logger.Log(LogLevel.Information, 0, infoText, null, static (s, _) => s);
+                    LogMessages.InformationRecord(logger, infoText);
                     break;
 
                 default:
+                    if (logger.IsEnabled(LogLevel.Debug))
+                    {
+                        // Log command output records only when diagnostic logging is enabled.
+#pragma warning disable CA1873 // Value is computed only when Debug logging is enabled.
+                        LogMessages.CommandOutputRecord(logger, result.ToString() ?? string.Empty);
+#pragma warning restore CA1873
+                    }
+
                     serializerInput.Add(result);
                     break;
             }
+        }
+
+        private static partial class LogMessages
+        {
+            [LoggerMessage(EventId = 3000, Level = LogLevel.Error, Message = "{message}")]
+            public static partial void ErrorRecord(ILogger logger, string message, Exception? exception);
+
+            [LoggerMessage(EventId = 3001, Level = LogLevel.Information, Message = "{message}")]
+            public static partial void VerboseRecord(ILogger logger, string message);
+
+            [LoggerMessage(EventId = 3002, Level = LogLevel.Warning, Message = "{message}")]
+            public static partial void WarningRecord(ILogger logger, string message);
+
+            [LoggerMessage(EventId = 3003, Level = LogLevel.Trace, Message = "{message}")]
+            public static partial void DebugRecord(ILogger logger, string message);
+
+            [LoggerMessage(EventId = 3004, Level = LogLevel.Information, Message = "{message}")]
+            public static partial void InformationRecord(ILogger logger, string message);
+
+            [LoggerMessage(EventId = 3005, Level = LogLevel.Debug, Message = "{message}")]
+            public static partial void CommandOutputRecord(ILogger logger, string message);
         }
     }
 
