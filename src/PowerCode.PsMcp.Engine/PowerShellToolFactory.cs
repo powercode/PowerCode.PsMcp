@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
 namespace PowerCode.PsMcp;
@@ -31,11 +32,12 @@ internal sealed record HelpInfo(
 /// for synopsis, parameter descriptions and examples, and <see cref="ParameterMetadata"/>
 /// for the JSON input schema.
 /// </summary>
-internal sealed class PowerShellToolFactory : IDisposable
+internal sealed partial class PowerShellToolFactory : IDisposable
 {
     private readonly Runspace _runspace;
     private readonly int _jsonDepth;
     private readonly McpPsHost _host;
+    private readonly ILogger _logger;
 
     // A single semaphore serialises all runspace access across every tool produced
     // by this factory, since PowerShell runspaces are single-threaded.
@@ -71,12 +73,14 @@ internal sealed class PowerShellToolFactory : IDisposable
     ///     Depth passed to <c>ConvertTo-Json</c> when serialising tool output.
     ///     Defaults to 2.
     /// </param>
-    public PowerShellToolFactory(Runspace runspace, McpPsHost host, int jsonDepth = 2)
+    public PowerShellToolFactory(Runspace runspace, McpPsHost host, ILogger logger, int jsonDepth = 2)
     {
         ArgumentNullException.ThrowIfNull(runspace);
+        ArgumentNullException.ThrowIfNull(logger);
         _runspace = runspace;
         _jsonDepth = jsonDepth;
         _host = host;
+        _logger = logger;
     }
 
     /// <summary>
@@ -95,15 +99,14 @@ internal sealed class PowerShellToolFactory : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
 
         var commandInfo = GetCommandInfo(commandName);
-        var helpInfo = GetHelpInfo(commandName);
         var parameterSets = ResolveParameterSets(commandInfo, commandName, config?.ParameterSets);
+        var helpInfo = GetHelpInfo(commandName, parameterSets);
         var syntax = BuildSyntax(commandName, parameterSets);
         var description = BuildDescription(helpInfo, syntax);
         var inputSchema = BuildSafeInputSchema(commandInfo, commandName, helpInfo.ParameterDescriptions, parameterSets);
         var outputSchema = BuildOutputSchema(commandInfo, parameterSets);
         var toolName = config?.Name ?? commandName;
         var toolDepth = config?.Depth ?? _jsonDepth;
-
         var protocolTool = new Tool
         {
             Name = toolName,
@@ -111,6 +114,23 @@ internal sealed class PowerShellToolFactory : IDisposable
             InputSchema = inputSchema,
             OutputSchema = outputSchema
         };
+
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            var parameterCount = parameterSets
+                .SelectMany(static set => set.Parameters.Select(static parameter => parameter.Name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count(name =>
+                    !s_commonParameters.Contains(name)
+                    && commandInfo.Parameters.TryGetValue(name, out var metadata)
+                    && !s_excludedTypes.Contains(metadata.ParameterType));
+
+            LogMessages.ToolSummary(_logger, toolName, parameterSets.Count, parameterCount);
+#pragma warning disable CA1873 // Values are computed only when Information logging is enabled.
+            LogMessages.ToolInputSchema(_logger, toolName, inputSchema.GetRawText());
+            LogMessages.ToolOutputSchema(_logger, toolName, outputSchema?.GetRawText() ?? "null");
+#pragma warning restore CA1873
+        }
 
         return new PowerShellTool(
             commandName,
@@ -160,7 +180,7 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// Builds the JSON input schema for a command, returning a minimal object schema
     /// when parameter metadata cannot be fully resolved.
     /// </summary>
-    private static JsonElement BuildSafeInputSchema(
+    private JsonElement BuildSafeInputSchema(
         CommandInfo commandInfo,
         string commandName,
         IReadOnlyDictionary<string, string> parameterDescriptions,
@@ -168,11 +188,11 @@ internal sealed class PowerShellToolFactory : IDisposable
     {
         try
         {
-            return BuildInputSchema(commandInfo, parameterDescriptions, parameterSets);
+            return BuildInputSchema(commandInfo, commandName, parameterDescriptions, parameterSets);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"DEBUG: Could not build input schema for '{commandName}': {ex.Message}");
+            LogMessages.InputSchemaBuildFailed(_logger, ex, commandName);
             var fallbackSchema = new Dictionary<string, object?>
             {
                 ["type"] = "object",
@@ -231,7 +251,7 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// extracting the synopsis, per-parameter descriptions, and examples.
     /// Returns <see cref="HelpInfo.Empty"/> on any failure.
     /// </summary>
-    private HelpInfo GetHelpInfo(string commandName)
+    private HelpInfo GetHelpInfo(string commandName, IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
         try
         {
@@ -244,10 +264,17 @@ internal sealed class PowerShellToolFactory : IDisposable
 
             if (helpObject is null)
             {
+                if (_logger.IsEnabled(LogLevel.Debug))
+                {
+#pragma warning disable CA1873 // Value is computed only when Debug logging is enabled.
+                    LogMessages.HelpResolutionSummary(_logger, commandName, "None", 0, CountExposedParameters(parameterSets));
+#pragma warning restore CA1873
+                }
                 return HelpInfo.Empty(commandName);
             }
 
             // Prefer Synopsis (short description) from help.
+            var helpSource = "Synopsis";
             var synopsis = helpObject.Properties["Synopsis"]?.Value?.ToString()?.Trim();
             if (string.IsNullOrWhiteSpace(synopsis) || synopsis == commandName)
             {
@@ -257,12 +284,18 @@ internal sealed class PowerShellToolFactory : IDisposable
                 if (!string.IsNullOrWhiteSpace(detailsDesc))
                 {
                     synopsis = detailsDesc;
+                    helpSource = "DetailsDescription";
+                }
+                else
+                {
+                    helpSource = "CommandNameFallback";
                 }
             }
 
             if (string.IsNullOrWhiteSpace(synopsis))
             {
                 synopsis = commandName;
+                helpSource = "CommandNameFallback";
             }
 
             // Extract per-parameter descriptions from .PARAMETER help blocks.
@@ -288,14 +321,24 @@ internal sealed class PowerShellToolFactory : IDisposable
                 }
             }
 
+            var expectedParameterCount = CountExposedParameters(parameterSets);
+            LogMessages.HelpResolutionSummary(_logger, commandName, helpSource, paramDescriptions.Count, expectedParameterCount);
+
             return new HelpInfo(synopsis, paramDescriptions);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"DEBUG: Could not retrieve help for '{commandName}': {ex.Message}");
+            LogMessages.HelpRetrievalFailed(_logger, ex, commandName);
             return HelpInfo.Empty(commandName);
         }
     }
+
+    private static int CountExposedParameters(IReadOnlyList<CommandParameterSetInfo> parameterSets) =>
+        parameterSets
+            .SelectMany(static set => set.Parameters.Select(static parameter => parameter.Name))
+            .Where(static name => !s_commonParameters.Contains(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
 
     /// <summary>
     /// Normalises a raw PSObject-or-array value into a list of <see cref="PSObject"/> instances.
@@ -350,14 +393,15 @@ internal sealed class PowerShellToolFactory : IDisposable
         return string.IsNullOrWhiteSpace(joined) ? null : joined;
     }
 
-    private static JsonElement BuildInputSchema(
+    private JsonElement BuildInputSchema(
         CommandInfo commandInfo,
+        string commandName,
         IReadOnlyDictionary<string, string> parameterDescriptions,
         IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
         // Multi-set commands get a oneOf schema with a per-set discriminator.
         if (parameterSets.Count > 1)
-            return BuildOneOfInputSchema(commandInfo, parameterDescriptions, parameterSets);
+            return BuildOneOfInputSchema(commandInfo, commandName, parameterDescriptions, parameterSets);
 
         var properties = new Dictionary<string, object?>();
         var required = new List<string>();
@@ -383,7 +427,7 @@ internal sealed class PowerShellToolFactory : IDisposable
                 continue;
 
             parameterDescriptions.TryGetValue(paramName, out var helpDescription);
-            var property = BuildPropertySchema(paramMeta, helpDescription);
+            var property = BuildPropertySchema(commandName, paramMeta, helpDescription);
             properties[paramName] = property;
 
             // A parameter is required only when it is Mandatory in every active parameter set
@@ -411,8 +455,9 @@ internal sealed class PowerShellToolFactory : IDisposable
         return doc.RootElement.Clone();
     }
 
-    private static JsonElement BuildOneOfInputSchema(
+    private JsonElement BuildOneOfInputSchema(
         CommandInfo commandInfo,
+        string commandName,
         IReadOnlyDictionary<string, string> parameterDescriptions,
         IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
@@ -436,7 +481,7 @@ internal sealed class PowerShellToolFactory : IDisposable
                     continue;
 
                 parameterDescriptions.TryGetValue(parameterInfo.Name, out var helpDescription);
-                properties[parameterInfo.Name] = BuildPropertySchema(paramMeta, helpDescription);
+                properties[parameterInfo.Name] = BuildPropertySchema(commandName, paramMeta, helpDescription);
 
                 if (parameterInfo.IsMandatory)
                     required.Add(parameterInfo.Name);
@@ -508,7 +553,8 @@ internal sealed class PowerShellToolFactory : IDisposable
         return true;
     }
 
-    private static Dictionary<string, object?> BuildPropertySchema(
+    private Dictionary<string, object?> BuildPropertySchema(
+        string commandName,
         ParameterMetadata paramMeta,
         string? helpDescription)
     {
@@ -546,6 +592,22 @@ internal sealed class PowerShellToolFactory : IDisposable
         ApplyValidateNotNullOrEmpty(property, paramMeta, paramType);
         ApplyAllowNull(property, paramMeta);
         ApplyDescription(property, paramMeta, helpDescription);
+
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            var typeSchema = JsonSerializer.Serialize(property.TryGetValue("type", out var mappedTypeSchema) ? mappedTypeSchema : "object");
+            var hasValidateSet = property.ContainsKey("enum");
+            var hasValidatePattern = property.ContainsKey("pattern");
+            var hasHelpDescription = property.ContainsKey("description");
+            LogMessages.ParameterMappingSummary(
+                _logger,
+                commandName,
+                paramMeta.Name,
+                typeSchema,
+                hasValidateSet,
+                hasValidatePattern,
+                hasHelpDescription);
+        }
 
         return property;
     }
@@ -736,6 +798,8 @@ internal sealed class PowerShellToolFactory : IDisposable
         CommandInfo commandInfo,
         IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
+        LogMessages.OutputTypeCount(_logger, commandInfo.Name, commandInfo.OutputType.Count);
+
         if (commandInfo.OutputType.Count == 0)
             return null;
 
@@ -861,7 +925,7 @@ internal sealed class PowerShellToolFactory : IDisposable
         };
     }
 
-    private static Dictionary<string, PSTypeName[]>? ResolvePerSetOutputTypes(CommandInfo commandInfo)
+    private Dictionary<string, PSTypeName[]>? ResolvePerSetOutputTypes(CommandInfo commandInfo)
     {
         IEnumerable<OutputTypeAttribute> outputTypeAttributes = commandInfo switch
         {
@@ -871,6 +935,8 @@ internal sealed class PowerShellToolFactory : IDisposable
         };
 
         var attributes = outputTypeAttributes.ToArray();
+        LogMessages.OutputTypeAttributeCount(_logger, commandInfo.Name, attributes.Length);
+
         if (attributes.Length == 0)
             return null;
 
@@ -906,6 +972,8 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         if (!hasNonAllParameterSet)
             return null;
+
+        LogMessages.OutputTypeSetMappings(_logger, commandInfo.Name, bySet.Count);
 
         return bySet.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
     }
@@ -948,10 +1016,12 @@ internal sealed class PowerShellToolFactory : IDisposable
         }
 
         var propSchemas = new Dictionary<string, object?>();
+        var clrPropertyCount = 0;
 
         // Reflect public CLR instance properties.
         foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
+            clrPropertyCount++;
             var propType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
             if (propType.IsArray)
             {
@@ -974,8 +1044,11 @@ internal sealed class PowerShellToolFactory : IDisposable
 
         // Merge ETS-defined properties (alias, code, note, script) registered for this type.
         // ETS entries supplement and can override CLR property schemas.
-        foreach (var (name, schema) in GetEtsProperties(type))
+        var etsProperties = GetEtsProperties(type);
+        foreach (var (name, schema) in etsProperties)
             propSchemas[name] = schema;
+
+        LogMessages.OutputTypePropertiesSummary(_logger, type.FullName ?? type.Name, clrPropertyCount, etsProperties.Count);
 
         if (propSchemas.Count == 0)
             return new Dictionary<string, object?> { ["type"] = "object" };
@@ -991,9 +1064,10 @@ internal sealed class PowerShellToolFactory : IDisposable
     /// Queries <c>Get-TypeData</c> for ETS members registered on <paramref name="type"/> and yields
     /// name/schema pairs for each property member. Internal PS members prefixed with <c>__</c> are skipped.
     /// </summary>
-    private IEnumerable<(string Name, Dictionary<string, object?> Schema)> GetEtsProperties(Type type)
+    private List<(string Name, Dictionary<string, object?> Schema)> GetEtsProperties(Type type)
     {
-        if (type.FullName is null) yield break;
+        if (type.FullName is null)
+            return [];
 
         TypeData? typeData;
         try
@@ -1003,12 +1077,19 @@ internal sealed class PowerShellToolFactory : IDisposable
             ps.AddCommand("Get-TypeData").AddParameter("TypeName", type.FullName);
             typeData = ps.Invoke().FirstOrDefault()?.BaseObject as TypeData;
         }
-        catch
+        catch (Exception ex)
         {
-            yield break;
+            LogMessages.EtsTypeDataQueryFailed(_logger, ex, type.FullName);
+            return [];
         }
 
-        if (typeData is null) yield break;
+        if (typeData is null)
+        {
+            LogMessages.EtsTypeDataNoEntries(_logger, type.FullName);
+            return [];
+        }
+
+        var entries = new List<(string Name, Dictionary<string, object?> Schema)>();
 
         foreach (var (name, member) in typeData.Members)
         {
@@ -1025,8 +1106,13 @@ internal sealed class PowerShellToolFactory : IDisposable
                 _                       => null
             };
 
-            if (schema is not null) yield return (name, schema);
+            if (schema is not null)
+                entries.Add((name, schema));
         }
+
+        LogMessages.EtsTypeDataSummary(_logger, type.FullName, entries.Count);
+
+        return entries;
     }
 
     /// <summary>
@@ -1139,4 +1225,49 @@ internal sealed class PowerShellToolFactory : IDisposable
             // and the caller passes a stringified value.
             _ => ("string", null)
         };
+
+    private static partial class LogMessages
+    {
+        [LoggerMessage(EventId = 1000, Level = LogLevel.Information, Message = "Tool '{toolName}': {parameterSetCount} parameter set(s), {parameterCount} parameter(s), input schema built, output schema built")]
+        public static partial void ToolSummary(ILogger logger, string toolName, int parameterSetCount, int parameterCount);
+
+        [LoggerMessage(EventId = 1001, Level = LogLevel.Information, Message = "Tool '{toolName}' input schema: {inputSchema}")]
+        public static partial void ToolInputSchema(ILogger logger, string toolName, string inputSchema);
+
+        [LoggerMessage(EventId = 1002, Level = LogLevel.Information, Message = "Tool '{toolName}' output schema: {outputSchema}")]
+        public static partial void ToolOutputSchema(ILogger logger, string toolName, string outputSchema);
+
+        [LoggerMessage(EventId = 1003, Level = LogLevel.Warning, Message = "Could not build input schema for '{commandName}'")]
+        public static partial void InputSchemaBuildFailed(ILogger logger, Exception exception, string commandName);
+
+        [LoggerMessage(EventId = 1004, Level = LogLevel.Debug, Message = "Command '{commandName}' help source: {helpSource}; descriptions found: {foundCount}/{expectedCount}")]
+        public static partial void HelpResolutionSummary(ILogger logger, string commandName, string helpSource, int foundCount, int expectedCount);
+
+        [LoggerMessage(EventId = 1005, Level = LogLevel.Warning, Message = "Could not retrieve help for '{commandName}'")]
+        public static partial void HelpRetrievalFailed(ILogger logger, Exception exception, string commandName);
+
+        [LoggerMessage(EventId = 1006, Level = LogLevel.Debug, Message = "Command '{commandName}' parameter '{parameterName}' mapped type {typeSchema} (ValidateSet: {hasValidateSet}, ValidatePattern: {hasValidatePattern}, HelpDescription: {hasHelpDescription})")]
+        public static partial void ParameterMappingSummary(ILogger logger, string commandName, string parameterName, string typeSchema, bool hasValidateSet, bool hasValidatePattern, bool hasHelpDescription);
+
+        [LoggerMessage(EventId = 1007, Level = LogLevel.Debug, Message = "Command '{commandName}' declared output types: {outputTypeCount}")]
+        public static partial void OutputTypeCount(ILogger logger, string commandName, int outputTypeCount);
+
+        [LoggerMessage(EventId = 1008, Level = LogLevel.Debug, Message = "Command '{commandName}' OutputType attributes found: {attributeCount}")]
+        public static partial void OutputTypeAttributeCount(ILogger logger, string commandName, int attributeCount);
+
+        [LoggerMessage(EventId = 1009, Level = LogLevel.Debug, Message = "Command '{commandName}' output parameter-set mappings resolved: {mappedSetCount}")]
+        public static partial void OutputTypeSetMappings(ILogger logger, string commandName, int mappedSetCount);
+
+        [LoggerMessage(EventId = 1010, Level = LogLevel.Debug, Message = "Output type '{typeName}': {clrPropertyCount} CLR properties, {etsPropertyCount} ETS properties")]
+        public static partial void OutputTypePropertiesSummary(ILogger logger, string typeName, int clrPropertyCount, int etsPropertyCount);
+
+        [LoggerMessage(EventId = 1011, Level = LogLevel.Debug, Message = "Could not query ETS type data for '{typeName}'")]
+        public static partial void EtsTypeDataQueryFailed(ILogger logger, Exception exception, string typeName);
+
+        [LoggerMessage(EventId = 1012, Level = LogLevel.Debug, Message = "ETS type data for '{typeName}': no entries")]
+        public static partial void EtsTypeDataNoEntries(ILogger logger, string typeName);
+
+        [LoggerMessage(EventId = 1013, Level = LogLevel.Debug, Message = "ETS type data for '{typeName}': {memberCount} mapped members")]
+        public static partial void EtsTypeDataSummary(ILogger logger, string typeName, int memberCount);
+    }
 }

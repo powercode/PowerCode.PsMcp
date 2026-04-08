@@ -20,7 +20,7 @@ namespace PowerCode.PsMcp;
 /// bypass it and communicate directly over the OS-level handles for JSON-RPC.
 /// </para>
 /// </summary>
-internal sealed class McpServerRunner
+internal sealed partial class McpServerRunner
 {
     private readonly Stream _input;
     private readonly Stream _output;
@@ -47,10 +47,10 @@ internal sealed class McpServerRunner
     /// <summary>
     /// Creates a logger factory that writes to stderr, preserving stdout for JSON-RPC.
     /// </summary>
-    private static ILoggerFactory CreateLoggerFactory() =>
+    private static ILoggerFactory CreateLoggerFactory(LogLevel minLevel = LogLevel.Warning) =>
         LoggerFactory.Create(builder =>
             builder.AddConsole(options =>
-                options.LogToStandardErrorThreshold = LogLevel.Trace));
+                options.LogToStandardErrorThreshold = minLevel));
 
     /// <summary>
     /// Starts the MCP server and blocks until <paramref name="cancellationToken"/> is cancelled.
@@ -59,7 +59,8 @@ internal sealed class McpServerRunner
     /// <param name="cancellationToken">Token that triggers graceful shutdown.</param>
     public async Task RunAsync(
         McpServerPrimitiveCollection<McpServerTool> toolCollection,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        LogLevel startupLogLevel = LogLevel.Warning)
     {
         ArgumentNullException.ThrowIfNull(toolCollection);
         cancellationToken.ThrowIfCancellationRequested();
@@ -81,7 +82,7 @@ internal sealed class McpServerRunner
             ToolCollection = toolCollection
         };
 
-        using var loggerFactory = CreateLoggerFactory();
+        using var loggerFactory = CreateLoggerFactory(startupLogLevel);
         await using var server = McpServer.Create(transport, options, loggerFactory);
         await server.RunAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -97,19 +98,22 @@ internal sealed class McpServerRunner
         string? scriptBlockText,
         string? callerScriptRoot,
         int jsonDepth,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        LogLevel startupLogLevel = LogLevel.Warning)
     {
         ArgumentNullException.ThrowIfNull(toolNames);
 
         var (runspace, host) = CreateConfiguredRunspace(modules: null, scriptPath, scriptBlockText, callerScriptRoot);
         using var _ = runspace;
+        using var loggerFactory = CreateLoggerFactory(startupLogLevel);
+        var factoryLogger = loggerFactory.CreateLogger<PowerShellToolFactory>();
 
-        using var factory = new PowerShellToolFactory(runspace, host, jsonDepth);
+        using var factory = new PowerShellToolFactory(runspace, host, factoryLogger, jsonDepth);
         var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
         foreach (var name in toolNames)
             toolCollection.Add(factory.Create(name));
 
-        await RunAsync(toolCollection, cancellationToken);
+        await RunAsync(toolCollection, cancellationToken, startupLogLevel);
     }
 
     /// <summary>
@@ -129,15 +133,26 @@ internal sealed class McpServerRunner
         string[]? exclude,
         IDictionary<string, McpToolConfig>? commandConfig,
         int jsonDepth,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        LogLevel startupLogLevel = LogLevel.Warning)
     {
         var baseline = GetDefaultCommandNames();
         var (runspace, host) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
         using var _ = runspace;
-        using var factory = new PowerShellToolFactory(runspace, host, jsonDepth);
+        using var loggerFactory = CreateLoggerFactory(startupLogLevel);
+        var factoryLogger = loggerFactory.CreateLogger<PowerShellToolFactory>();
+        using var factory = new PowerShellToolFactory(runspace, host, factoryLogger, jsonDepth);
 
-        var toolCollection = BuildDiscoveredToolCollection(baseline, runspace, factory, modules, include, exclude, commandConfig);
-        await RunAsync(toolCollection, cancellationToken);
+        var toolCollection = BuildDiscoveredToolCollection(
+            baseline,
+            runspace,
+            factory,
+            factoryLogger,
+            modules,
+            include,
+            exclude,
+            commandConfig);
+        await RunAsync(toolCollection, cancellationToken, startupLogLevel);
     }
 
     /// <summary>
@@ -177,11 +192,14 @@ internal sealed class McpServerRunner
         HashSet<string> baseline,
         Runspace runspace,
         PowerShellToolFactory factory,
+        ILogger logger,
         string[]? modules,
         string[]? include,
         string[]? exclude,
         IDictionary<string, McpToolConfig>? commandConfig)
     {
+        LogMessages.DiscoveryBaseline(logger, baseline.Count);
+
         var allCommands = GetAllCommandNames(runspace);
 
         // Build the include pool: delta + commands from explicitly imported modules.
@@ -189,6 +207,7 @@ internal sealed class McpServerRunner
         // be included when its owning module is also declared via -Module.
         var delta = new HashSet<string>(allCommands, StringComparer.OrdinalIgnoreCase);
         delta.ExceptWith(baseline);
+        LogMessages.DiscoveryPostLoad(logger, allCommands.Count, delta.Count);
 
         var includePool = new HashSet<string>(delta, StringComparer.OrdinalIgnoreCase);
         if (modules is { Length: > 0 })
@@ -196,6 +215,9 @@ internal sealed class McpServerRunner
 
         var includePatterns = include?.Select(p => new WildcardPattern(p, WildcardOptions.IgnoreCase)).ToArray();
         var excludePatterns = exclude?.Select(p => new WildcardPattern(p, WildcardOptions.IgnoreCase)).ToArray();
+
+        LogMessages.DiscoveryIncludePatterns(logger, include);
+        LogMessages.DiscoveryExcludePatterns(logger, exclude);
 
         var discovered = DiscoverCommands(baseline, allCommands, includePool, includePatterns, excludePatterns);
 
@@ -212,7 +234,61 @@ internal sealed class McpServerRunner
             toolCollection.Add(factory.Create(cmdName, config));
         }
 
+        LogMessages.DiscoveryComplete(logger, toolCollection.Count);
+
         return toolCollection;
+    }
+
+    private static partial class LogMessages
+    {
+        [LoggerMessage(EventId = 2000, Level = LogLevel.Information, Message = "Discovery baseline: {baselineCount} commands")]
+        public static partial void DiscoveryBaseline(ILogger logger, int baselineCount);
+
+        [LoggerMessage(EventId = 2001, Level = LogLevel.Information, Message = "Discovery post-load: {allCount} commands ({deltaCount} new)")]
+        public static partial void DiscoveryPostLoad(ILogger logger, int allCount, int deltaCount);
+
+        [LoggerMessage(EventId = 2002, Level = LogLevel.Information, Message = "Discovery include patterns: {includePatterns}")]
+        private static partial void DiscoveryIncludePatternsCore(ILogger logger, string includePatterns);
+
+        public static void DiscoveryIncludePatterns(ILogger logger, string[]? includePatterns)
+        {
+            if (includePatterns is null || includePatterns.Length == 0)
+            {
+                return;
+            }
+
+            if (!logger.IsEnabled(LogLevel.Information))
+            {
+                return;
+            }
+
+#pragma warning disable CA1873 // This value is intentionally computed only when logging is enabled.
+            DiscoveryIncludePatternsCore(logger, string.Join(", ", includePatterns));
+#pragma warning restore CA1873
+        }
+
+        [LoggerMessage(EventId = 2003, Level = LogLevel.Information, Message = "Discovery exclude patterns: {excludePatterns}")]
+        private static partial void DiscoveryExcludePatternsCore(ILogger logger, string excludePatterns);
+
+        public static void DiscoveryExcludePatterns(ILogger logger, string[]? excludePatterns)
+        {
+            if (excludePatterns is null || excludePatterns.Length == 0)
+            {
+                return;
+            }
+
+            if (!logger.IsEnabled(LogLevel.Information))
+            {
+                return;
+            }
+
+#pragma warning disable CA1873 // This value is intentionally computed only when logging is enabled.
+            DiscoveryExcludePatternsCore(logger, string.Join(", ", excludePatterns));
+#pragma warning restore CA1873
+        }
+
+        [LoggerMessage(EventId = 2004, Level = LogLevel.Information, Message = "Discovery complete: {toolCount} tools registered")]
+        public static partial void DiscoveryComplete(ILogger logger, int toolCount);
     }
 
     internal static void DotSourceScript(Runspace runspace, string scriptPath)

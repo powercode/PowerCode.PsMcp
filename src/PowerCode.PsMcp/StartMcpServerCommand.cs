@@ -1,6 +1,7 @@
 using System.Collections;
 using System.IO;
 using System.Management.Automation;
+using Microsoft.Extensions.Logging;
 
 namespace PowerCode.PsMcp;
 
@@ -79,6 +80,13 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     [ValidateRange(1, 10)]
     public int Depth { get; set; } = 2;
 
+    /// <summary>
+    /// Enables startup diagnostics for command discovery and schema mapping.
+    /// When enabled, startup logs are emitted at <see cref="LogLevel.Debug"/>.
+    /// </summary>
+    [Parameter(HelpMessage = "Enable startup diagnostic logging for discovery and schema mapping")]
+    public SwitchParameter DiagnosticLogging { get; set; }
+
     // ── Private state ────────────────────────────────────────────────────────
 
     private CancellationTokenSource? _cts;
@@ -136,8 +144,10 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
                     : MyInvocation.PSScriptRoot;
             }
 
+            var startupLogLevel = DiagnosticLogging.IsPresent ? LogLevel.Debug : LogLevel.Warning;
+
 #pragma warning disable CA2025 // GetResult() blocks synchronously by design for cmdlet execution.
-        runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, _cts.Token)
+        runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, _cts.Token, startupLogLevel)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025

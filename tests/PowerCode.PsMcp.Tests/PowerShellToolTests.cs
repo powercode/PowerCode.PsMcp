@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -28,7 +29,7 @@ public sealed class PowerShellToolTests : IDisposable
     {
         _runspace = RunspaceFactory.CreateRunspace();
         _runspace.Open();
-        _factory = new PowerShellToolFactory(_runspace, new McpPsHost(), jsonDepth: 2);
+        _factory = new PowerShellToolFactory(_runspace, new McpPsHost(), NullLogger<PowerShellToolFactory>.Instance, jsonDepth: 2);
     }
 
     [TestInitialize]
