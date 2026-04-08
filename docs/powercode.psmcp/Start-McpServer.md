@@ -20,7 +20,7 @@ Exposes PowerShell commands as MCP tools over JSON-RPC/stdio using automatic com
 ```
 Start-McpServer [[-Module] <string[]>] [-Include <string[]>] [-Exclude <string[]>]
  [-CommandConfiguration <hashtable>] [-ScriptPath <string>] [-ScriptBlock <scriptblock>] [-Depth <int>]
- [<CommonParameters>]
+ [-DiagnosticLogging] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -172,6 +172,28 @@ from the discovered command set. Exclusions are applied after `-Include`.
 Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: true
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -DiagnosticLogging
+
+Enables startup diagnostic logging for command discovery and schema mapping.
+When set, startup logs are emitted at trace level; otherwise warning level is used.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: 'False'
+SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
