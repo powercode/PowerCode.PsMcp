@@ -1,5 +1,6 @@
 using System.IO.Pipelines;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -62,6 +63,7 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: null,
             jsonDepth: 2,
+            LogLevel.Trace,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -102,6 +104,7 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: null,
             jsonDepth: 2,
+            LogLevel.Trace,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -155,6 +158,7 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: null,
             jsonDepth: 2,
+            LogLevel.Trace,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -200,6 +204,7 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: null,
             jsonDepth: 2,
+            LogLevel.Trace,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(
@@ -246,6 +251,7 @@ public sealed class McpServerSystemTests
             exclude: null,
             commandConfig: commandConfig,
             jsonDepth: 2,
+            LogLevel.Trace,
             cts.Token);
 
         await using var client = await McpClient.CreateAsync(

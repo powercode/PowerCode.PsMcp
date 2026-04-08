@@ -11,6 +11,8 @@ namespace PowerCode.PsMcp;
 /// stderr, preserving stdout for MCP JSON-RPC communication. Interactive operations
 /// (prompts, credentials, secure string input) throw <see cref="NotSupportedException"/>
 /// because no interactive user is present in MCP server mode.
+/// Transport-facing stderr output is intentionally separate from client-visible MCP log
+/// notifications emitted during a tool invocation.
 /// </summary>
 internal sealed class McpPsHostUserInterface : PSHostUserInterface
 {

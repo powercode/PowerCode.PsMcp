@@ -114,7 +114,7 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
             var startupLogLevel = DiagnosticLogging.IsPresent ? LogLevel.Trace : LogLevel.Warning;
 
 #pragma warning disable CA2025 // GetResult() blocks synchronously by design for cmdlet execution.
-            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, _cts.Token, startupLogLevel)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, startupLogLevel, _cts.Token)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025

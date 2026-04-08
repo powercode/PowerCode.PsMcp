@@ -30,7 +30,7 @@ public sealed class PowerShellToolTests : IDisposable
     {
         _runspace = RunspaceFactory.CreateRunspace();
         _runspace.Open();
-        _factory = new PowerShellToolFactory(_runspace, new McpPsHost(), NullLogger<PowerShellToolFactory>.Instance, jsonDepth: 2);
+        _factory = new PowerShellToolFactory(_runspace, new McpPsHost(), NullLoggerFactory.Instance, jsonDepth: 2);
     }
 
     [TestInitialize]
@@ -51,7 +51,7 @@ public sealed class PowerShellToolTests : IDisposable
         await _dummyServer.DisposeAsync();
 
         _runspace.Close();
-        _runspace.Dispose();
+        _runspace.Dispose();    
     }
 
     /// <inheritdoc />
@@ -261,6 +261,35 @@ public sealed class PowerShellToolTests : IDisposable
                 .Select(entry => entry.Message));
 
         Assert.Contains("debug-log-output", debugLogText, StringComparison.Ordinal);
+    }
+
+    [TestMethod]
+    public async Task InvokeAsync_WithWarningCommand_LogsToInjectedStderrLogger()
+    {
+        var loggerProvider = new TestLoggerProvider();
+        using var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Warning);
+            builder.AddProvider(loggerProvider);
+        });
+
+        using var factory = new PowerShellToolFactory(_runspace, new McpPsHost(), loggerFactory, jsonDepth: 2);
+        var tool = factory.Create("Write-Warning");
+        var args = new Dictionary<string, JsonElement>
+        {
+            ["Message"] = JsonSerializer.SerializeToElement("stderr-warning-test")
+        };
+        var ctx = BuildContext(tool, args);
+
+        await tool.InvokeAsync(ctx, CancellationToken.None);
+
+        var warningLogText = string.Join(
+            Environment.NewLine,
+            loggerProvider.Entries
+                .Where(entry => entry.Level == LogLevel.Warning)
+                .Select(entry => entry.Message));
+
+        Assert.Contains("stderr-warning-test", warningLogText, StringComparison.Ordinal);
     }
 
     [TestMethod]

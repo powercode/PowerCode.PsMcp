@@ -2,6 +2,7 @@ using System.IO;
 using System.Management.Automation;
 using System.Management.Automation.Language;
 using System.Management.Automation.Runspaces;
+using System.Reflection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -45,14 +46,6 @@ internal sealed partial class McpServerRunner
     public McpServerRunner() : this(Console.OpenStandardInput(), Console.OpenStandardOutput()) { }
 
     /// <summary>
-    /// Creates a logger factory that writes to stderr, preserving stdout for JSON-RPC.
-    /// </summary>
-    private static ILoggerFactory CreateLoggerFactory(LogLevel minLevel = LogLevel.Warning) =>
-        LoggerFactory.Create(builder =>
-            builder.AddConsole(options =>
-                options.LogToStandardErrorThreshold = minLevel));
-
-    /// <summary>
     /// Starts the MCP server and blocks until <paramref name="cancellationToken"/> is cancelled.
     /// </summary>
     /// <param name="toolCollection">Pre-built collection of tools to expose.</param>
@@ -73,7 +66,7 @@ internal sealed partial class McpServerRunner
             ServerInfo = new Implementation
             {
                 Name = "PowerCode PowerShell MCP",
-                Version = "1.0.0"
+                Version = Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "unknown"
             },
             Capabilities = new ServerCapabilities
             {
@@ -83,9 +76,8 @@ internal sealed partial class McpServerRunner
             ToolCollection = toolCollection
         };
 
-        using var loggerFactory = CreateLoggerFactory(startupLogLevel);
-        await using var server = McpServer.Create(transport, options, loggerFactory);
-        await server.RunAsync(cancellationToken).ConfigureAwait(false);
+        using var stderrLoggerFactory = McpLogging.CreateStderrLoggerFactory(startupLogLevel);
+        await RunAsyncCore(transport, options, stderrLoggerFactory, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -96,8 +88,7 @@ internal sealed partial class McpServerRunner
     /// <exception cref="InvalidOperationException">
     ///   Thrown when no commands are discovered after filtering.
     /// </exception>
-    public async Task RunAsync(
-        string[]? modules,
+    public async Task RunAsync(string[]? modules,
         string? scriptPath,
         string? scriptBlockText,
         string? callerScriptRoot,
@@ -105,26 +96,68 @@ internal sealed partial class McpServerRunner
         string[]? exclude,
         IDictionary<string, McpToolConfig>? commandConfig,
         int jsonDepth,
-        CancellationToken cancellationToken,
-        LogLevel startupLogLevel = LogLevel.Warning)
+        LogLevel startupLogLevel,
+        CancellationToken cancellationToken)
     {
         var baseline = GetDefaultCommandNames();
         var (runspace, host) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
         using var _ = runspace;
-        using var loggerFactory = CreateLoggerFactory(startupLogLevel);
-        var factoryLogger = loggerFactory.CreateLogger<PowerShellToolFactory>();
-        using var factory = new PowerShellToolFactory(runspace, host, factoryLogger, jsonDepth);
+        if (startupLogLevel != LogLevel.Debug)
+        {
+            throw new InvalidOperationException("Debug");
+        }
+        using var stderrLoggerFactory = McpLogging.CreateStderrLoggerFactory(startupLogLevel);
+        var discoveryLogger = stderrLoggerFactory.CreateLogger<PowerShellToolFactory>();
+        using var factory = new PowerShellToolFactory(runspace, host, stderrLoggerFactory, jsonDepth);
 
         var toolCollection = BuildDiscoveredToolCollection(
             baseline,
             runspace,
             factory,
-            factoryLogger,
+            discoveryLogger,
             modules,
             include,
             exclude,
             commandConfig);
-        await RunAsync(toolCollection, cancellationToken, startupLogLevel);
+
+        await using var transport = new StreamServerTransport(_input, _output);
+
+        var options = new McpServerOptions
+        {
+            ServerInfo = new Implementation
+            {
+                Name = "PowerCode PowerShell MCP",
+                Version = Assembly.GetExecutingAssembly().GetCustomAttributes<AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "unknown"
+            },
+            Capabilities = new ServerCapabilities
+            {
+                Tools = new ToolsCapability(),
+                Logging = new LoggingCapability()
+            },
+            ToolCollection = toolCollection
+        };
+
+        await RunAsyncCore(transport, options, stderrLoggerFactory, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Starts the server using a caller-owned stderr logger factory so process-local diagnostics
+    /// and tool execution logs share the same stderr logging channel.
+    /// </summary>
+    private static async Task RunAsyncCore(
+        StreamServerTransport transport,
+        McpServerOptions options,
+        ILoggerFactory stderrLoggerFactory,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(transport);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(stderrLoggerFactory);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await using var server = McpServer.Create(transport, options, stderrLoggerFactory);
+        await server.RunAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

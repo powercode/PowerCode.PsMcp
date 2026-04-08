@@ -28,8 +28,8 @@ namespace PowerCode.PsMcp;
 /// Results are classified by <see cref="PipelineClassifier"/> via the
 /// <see cref="System.Management.Automation.PSDataCollection{T}.DataAdded"/> event as each
 /// object arrives — without waiting for the command to finish. This means diagnostic
-/// records (errors, warnings, verbose lines, etc.) are forwarded to the MCP client as
-/// <c>notifications/message</c> log entries in real time during long-running commands.
+/// records (errors, warnings, verbose lines, etc.) are written to stderr and also forwarded
+/// to the MCP client as <c>notifications/message</c> log entries in real time during long-running commands.
 /// True output objects are forwarded into a serializer input collection for later processing.
 /// </para>
 /// <para>
@@ -56,6 +56,7 @@ internal sealed partial class PowerShellTool : McpServerTool
     private readonly SemaphoreSlim _runspaceLock;
     private readonly int _jsonDepth;
     private readonly McpPsHost _host;
+    private readonly ILogger _stderrLogger;
     private readonly string[]? _selectProperty;
     private readonly string[]? _excludeProperty;
 
@@ -73,6 +74,7 @@ internal sealed partial class PowerShellTool : McpServerTool
     ///   during tool execution are forwarded to the MCP client as progress notifications,
     ///   provided the caller included a progress token in the request.
     /// </param>
+    /// <param name="stderrLogger">Process-local logger used to write tool execution diagnostics to stderr.</param>
     /// <param name="selectProperty">Properties to include in tool output via <c>Select-Object -Property</c>.</param>
     /// <param name="excludeProperty">Properties to exclude from tool output via <c>Select-Object -ExcludeProperty</c>.</param>
     public PowerShellTool(
@@ -82,6 +84,7 @@ internal sealed partial class PowerShellTool : McpServerTool
         SemaphoreSlim runspaceLock,
         int jsonDepth,
         McpPsHost host,
+        ILogger stderrLogger,
         string[]? selectProperty = null,
         string[]? excludeProperty = null)
     {
@@ -89,6 +92,7 @@ internal sealed partial class PowerShellTool : McpServerTool
         ArgumentNullException.ThrowIfNull(protocolTool);
         ArgumentNullException.ThrowIfNull(runspace);
         ArgumentNullException.ThrowIfNull(runspaceLock);
+        ArgumentNullException.ThrowIfNull(stderrLogger);
 
         _commandName = commandName;
         _protocolTool = protocolTool;
@@ -96,6 +100,7 @@ internal sealed partial class PowerShellTool : McpServerTool
         _runspaceLock = runspaceLock;
         _jsonDepth = jsonDepth;
         _host = host;
+        _stderrLogger = stderrLogger;
         _selectProperty = selectProperty;
         _excludeProperty = excludeProperty;
     }
@@ -137,7 +142,7 @@ internal sealed partial class PowerShellTool : McpServerTool
             // is available on it. Progress is routed through the host because
             // WriteProgress is called in real-time by the PS engine during execution.
             IProgress<ProgressNotificationValue>? progress = null;
-            var progressToken = request.Params?.ProgressToken;
+            var progressToken = request.Params.ProgressToken;
             if (progressToken.HasValue)
                 progress = new McpProgressReporter(request.Server, progressToken.Value);
 
@@ -164,8 +169,8 @@ internal sealed partial class PowerShellTool : McpServerTool
         RequestContext<CallToolRequestParams> request,
         CancellationToken cancellationToken)
     {
-        using var loggerProvider = request.Server.AsClientLoggerProvider();
-        var logger = loggerProvider.CreateLogger(_commandName);
+        using var toolLoggerScope = McpLogging.CreateToolLoggerScope(request, _stderrLogger, _commandName);
+        var logger = toolLoggerScope.Logger;
 
         using var serializerInput = new PSDataCollection<PSObject>();
         var classifier = new PipelineClassifier(serializerInput, logger);
@@ -175,7 +180,7 @@ internal sealed partial class PowerShellTool : McpServerTool
 
         using var commandPs = PowerShell.Create();
         commandPs.Runspace = _runspace;
-        var parameterSetName = ConfigurePipelineCommand(commandPs, request.Params?.Arguments);
+        var parameterSetName = ConfigurePipelineCommand(commandPs, request.Params.Arguments);
         
         try
         {
@@ -184,12 +189,7 @@ internal sealed partial class PowerShellTool : McpServerTool
             {
                 classifier.TextLines.Add("CANCELLED: Tool invocation was cancelled.");
                 serializerInput.Complete();
-                return BuildResult(
-                    serializerInput,
-                    classifier.TextLines,
-                    hasErrors: true,
-                    classifier.ErrorRecords,
-                    parameterSetName);
+                return BuildResult(serializerInput, classifier.TextLines, hasErrors: true, classifier.ErrorRecords, parameterSetName);
             }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -214,21 +214,11 @@ internal sealed partial class PowerShellTool : McpServerTool
             }
 
             serializerInput.Complete();
-            return BuildResult(
-                serializerInput,
-                classifier.TextLines,
-                hasErrors: true,
-                classifier.ErrorRecords,
-                parameterSetName);
+            return BuildResult(serializerInput, classifier.TextLines, hasErrors: true, classifier.ErrorRecords, parameterSetName);
         }
 
         serializerInput.Complete();
-        return BuildResult(
-            serializerInput,
-            classifier.TextLines,
-            classifier.HasErrors,
-            classifier.ErrorRecords,
-            parameterSetName);
+        return BuildResult(serializerInput, classifier.TextLines, classifier.HasErrors, classifier.ErrorRecords, parameterSetName);
     }
 
     /// <summary>Creates a configured serializer pipeline (Select-Object + ConvertTo-Json).</summary>
@@ -372,9 +362,7 @@ internal sealed partial class PowerShellTool : McpServerTool
     }
 
     /// <summary>
-    /// Serialises pipeline output objects into a JSON envelope: <c>{"items": [...]}</c>.
-    /// <paramref name="serializerPs"/> must already have <c>Select-Object</c> and/or
-    /// <c>ConvertTo-Json</c> configured; <paramref name="input"/> must be completed.
+    /// Serializes pipeline output objects into a JSON envelope: <c>{"items": [...]}</c>.
     /// </summary>
     private static JsonElement ConvertToJsonEnvelope(
         JsonElement itemsElement,

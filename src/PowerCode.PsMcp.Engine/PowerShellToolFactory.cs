@@ -37,7 +37,8 @@ internal sealed partial class PowerShellToolFactory : IDisposable
     private readonly Runspace _runspace;
     private readonly int _jsonDepth;
     private readonly McpPsHost _host;
-    private readonly ILogger _logger;
+    private readonly ILoggerFactory _stderrLoggerFactory;
+    private readonly ILogger _diagnosticLogger;
 
     // A single semaphore serialises all runspace access across every tool produced
     // by this factory, since PowerShell runspaces are single-threaded.
@@ -73,14 +74,15 @@ internal sealed partial class PowerShellToolFactory : IDisposable
     ///     Depth passed to <c>ConvertTo-Json</c> when serialising tool output.
     ///     Defaults to 2.
     /// </param>
-    public PowerShellToolFactory(Runspace runspace, McpPsHost host, ILogger logger, int jsonDepth = 2)
+    public PowerShellToolFactory(Runspace runspace, McpPsHost host, ILoggerFactory stderrLoggerFactory, int jsonDepth = 2)
     {
         ArgumentNullException.ThrowIfNull(runspace);
-        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(stderrLoggerFactory);
         _runspace = runspace;
         _jsonDepth = jsonDepth;
         _host = host;
-        _logger = logger;
+        _stderrLoggerFactory = stderrLoggerFactory;
+        _diagnosticLogger = stderrLoggerFactory.CreateLogger<PowerShellToolFactory>();
     }
 
     /// <summary>
@@ -115,7 +117,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             OutputSchema = outputSchema
         };
 
-        if (_logger.IsEnabled(LogLevel.Information))
+        if (_diagnosticLogger.IsEnabled(LogLevel.Information))
         {
             var parameterCount = parameterSets
                 .SelectMany(static set => set.Parameters.Select(static parameter => parameter.Name))
@@ -125,10 +127,10 @@ internal sealed partial class PowerShellToolFactory : IDisposable
                     && commandInfo.Parameters.TryGetValue(name, out var metadata)
                     && !s_excludedTypes.Contains(metadata.ParameterType));
 
-            LogMessages.ToolSummary(_logger, toolName, parameterSets.Count, parameterCount);
+            LogMessages.ToolSummary(_diagnosticLogger, toolName, parameterSets.Count, parameterCount);
 #pragma warning disable CA1873 // Values are computed only when Information logging is enabled.
-            LogMessages.ToolInputSchema(_logger, toolName, inputSchema.GetRawText());
-            LogMessages.ToolOutputSchema(_logger, toolName, outputSchema?.GetRawText() ?? "null");
+            LogMessages.ToolInputSchema(_diagnosticLogger, toolName, inputSchema.GetRawText());
+            LogMessages.ToolOutputSchema(_diagnosticLogger, toolName, outputSchema?.GetRawText() ?? "null");
 #pragma warning restore CA1873
         }
 
@@ -139,6 +141,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             _runspaceLock,
             toolDepth,
             _host,
+            _stderrLoggerFactory.CreateLogger(commandName),
             config?.Property,
             config?.ExcludeProperty);
     }
@@ -192,7 +195,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         }
         catch (Exception ex)
         {
-            LogMessages.InputSchemaBuildFailed(_logger, ex, commandName);
+            LogMessages.InputSchemaBuildFailed(_diagnosticLogger, ex, commandName);
             var fallbackSchema = new Dictionary<string, object?>
             {
                 ["type"] = "object",
@@ -264,10 +267,10 @@ internal sealed partial class PowerShellToolFactory : IDisposable
 
             if (helpObject is null)
             {
-                if (_logger.IsEnabled(LogLevel.Debug))
+                if (_diagnosticLogger.IsEnabled(LogLevel.Debug))
                 {
 #pragma warning disable CA1873 // Value is computed only when Debug logging is enabled.
-                    LogMessages.HelpResolutionSummary(_logger, commandName, "None", 0, CountExposedParameters(parameterSets));
+                    LogMessages.HelpResolutionSummary(_diagnosticLogger, commandName, "None", 0, CountExposedParameters(parameterSets));
 #pragma warning restore CA1873
                 }
                 return HelpInfo.Empty(commandName);
@@ -322,13 +325,13 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             }
 
             var expectedParameterCount = CountExposedParameters(parameterSets);
-            LogMessages.HelpResolutionSummary(_logger, commandName, helpSource, paramDescriptions.Count, expectedParameterCount);
+            LogMessages.HelpResolutionSummary(_diagnosticLogger, commandName, helpSource, paramDescriptions.Count, expectedParameterCount);
 
             return new HelpInfo(synopsis, paramDescriptions);
         }
         catch (Exception ex)
         {
-            LogMessages.HelpRetrievalFailed(_logger, ex, commandName);
+            LogMessages.HelpRetrievalFailed(_diagnosticLogger, ex, commandName);
             return HelpInfo.Empty(commandName);
         }
     }
@@ -603,14 +606,14 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         ApplyAllowNull(property, paramMeta);
         ApplyDescription(property, paramMeta, helpDescription);
 
-        if (_logger.IsEnabled(LogLevel.Debug))
+        if (_diagnosticLogger.IsEnabled(LogLevel.Debug))
         {
             var typeSchema = JsonSerializer.Serialize(property.TryGetValue("type", out var mappedTypeSchema) ? mappedTypeSchema : "object");
             var hasValidateSet = property.ContainsKey("enum");
             var hasValidatePattern = property.ContainsKey("pattern");
             var hasHelpDescription = property.ContainsKey("description");
             LogMessages.ParameterMappingSummary(
-                _logger,
+            _diagnosticLogger,
                 commandName,
                 paramMeta.Name,
                 typeSchema,
@@ -808,7 +811,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         CommandInfo commandInfo,
         IReadOnlyList<CommandParameterSetInfo> parameterSets)
     {
-        LogMessages.OutputTypeCount(_logger, commandInfo.Name, commandInfo.OutputType.Count);
+        LogMessages.OutputTypeCount(_diagnosticLogger, commandInfo.Name, commandInfo.OutputType.Count);
 
         if (commandInfo.OutputType.Count == 0)
             return null;
@@ -945,7 +948,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         };
 
         var attributes = outputTypeAttributes.ToArray();
-        LogMessages.OutputTypeAttributeCount(_logger, commandInfo.Name, attributes.Length);
+        LogMessages.OutputTypeAttributeCount(_diagnosticLogger, commandInfo.Name, attributes.Length);
 
         if (attributes.Length == 0)
             return null;
@@ -983,7 +986,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         if (!hasNonAllParameterSet)
             return null;
 
-        LogMessages.OutputTypeSetMappings(_logger, commandInfo.Name, bySet.Count);
+        LogMessages.OutputTypeSetMappings(_diagnosticLogger, commandInfo.Name, bySet.Count);
 
         return bySet.ToDictionary(static pair => pair.Key, static pair => pair.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
     }
@@ -1052,7 +1055,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         foreach (var (name, schema) in etsProperties)
             propSchemas[name] = schema;
 
-        LogMessages.OutputTypePropertiesSummary(_logger, type.FullName ?? type.Name, clrPropertyCount, etsProperties.Count);
+        LogMessages.OutputTypePropertiesSummary(_diagnosticLogger, type.FullName ?? type.Name, clrPropertyCount, etsProperties.Count);
 
         if (propSchemas.Count == 0)
             return new Dictionary<string, object?> { ["type"] = "object" };
@@ -1083,13 +1086,13 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         }
         catch (Exception ex)
         {
-            LogMessages.EtsTypeDataQueryFailed(_logger, ex, type.FullName);
+            LogMessages.EtsTypeDataQueryFailed(_diagnosticLogger, ex, type.FullName);
             return [];
         }
 
         if (typeData is null)
         {
-            LogMessages.EtsTypeDataNoEntries(_logger, type.FullName);
+            LogMessages.EtsTypeDataNoEntries(_diagnosticLogger, type.FullName);
             return [];
         }
 
@@ -1114,7 +1117,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
                 entries.Add((name, schema));
         }
 
-        LogMessages.EtsTypeDataSummary(_logger, type.FullName, entries.Count);
+        LogMessages.EtsTypeDataSummary(_diagnosticLogger, type.FullName, entries.Count);
 
         return entries;
     }
