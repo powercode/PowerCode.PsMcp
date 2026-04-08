@@ -636,7 +636,17 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         if (validateSet is null)
             return;
 
-        property["enum"] = validateSet.ValidValues.Cast<object>().ToArray();
+        var enumValues = validateSet.ValidValues.Cast<object>().ToArray();
+
+        if (paramMeta.ParameterType.IsArray
+            && property.TryGetValue("items", out var itemsSchema)
+            && itemsSchema is Dictionary<string, object?> items)
+        {
+            items["enum"] = enumValues;
+            return;
+        }
+
+        property["enum"] = enumValues;
     }
 
     /// <summary>

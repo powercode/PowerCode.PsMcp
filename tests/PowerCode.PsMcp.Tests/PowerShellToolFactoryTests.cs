@@ -283,6 +283,39 @@ public sealed class PowerShellToolFactoryTests : IDisposable
     }
 
     [TestMethod]
+    public void Create_FunctionWithStringArrayValidateSet_EmitsEnumOnItems()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     function Test-StringArrayValidateSet {
+                         param(
+                             [ValidateSet('Alpha', 'Beta')]
+                             [string[]]$Values
+                         )
+                     }
+                     """);
+        ps.Invoke();
+
+        var valuesProp = _factory.Create("Test-StringArrayValidateSet").ProtocolTool.InputSchema
+            .GetProperty("properties")
+            .GetProperty("Values");
+
+        Assert.AreEqual("array", valuesProp.GetProperty("type").GetString());
+        Assert.AreEqual("string", valuesProp.GetProperty("items").GetProperty("type").GetString());
+
+        var itemEnum = valuesProp.GetProperty("items").GetProperty("enum")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToList();
+
+        Assert.Contains("Alpha", itemEnum);
+        Assert.Contains("Beta", itemEnum);
+        Assert.IsFalse(valuesProp.TryGetProperty("enum", out _),
+            "ValidateSet on arrays must be applied to items.enum, not the array itself.");
+    }
+
+    [TestMethod]
     public void Create_FunctionWithValidatePattern_AppearsAsPatternInSchema()
     {
         using var ps = PowerShell.Create();
