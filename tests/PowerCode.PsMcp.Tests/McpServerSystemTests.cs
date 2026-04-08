@@ -54,10 +54,13 @@ public sealed class McpServerSystemTests
             serverToClient.Writer.AsStream());
 
         var serverTask = runner.RunAsync(
-            ["Get-CurrentWeather"],
+            modules: null,
             scriptPath: null,
             scriptBlockText: GetCurrentWeatherDefinition,
             callerScriptRoot: null,
+            include: ["Get-CurrentWeather"],
+            exclude: null,
+            commandConfig: null,
             jsonDepth: 2,
             cts.Token);
 
@@ -91,10 +94,13 @@ public sealed class McpServerSystemTests
             serverToClient.Writer.AsStream());
 
         var serverTask = runner.RunAsync(
-            ["Get-CurrentWeather"],
+            modules: null,
             scriptPath: null,
             scriptBlockText: GetCurrentWeatherDefinition,
             callerScriptRoot: null,
+            include: ["Get-CurrentWeather"],
+            exclude: null,
+            commandConfig: null,
             jsonDepth: 2,
             cts.Token);
 

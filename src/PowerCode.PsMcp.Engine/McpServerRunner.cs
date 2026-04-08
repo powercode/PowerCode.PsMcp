@@ -57,7 +57,7 @@ internal sealed partial class McpServerRunner
     /// </summary>
     /// <param name="toolCollection">Pre-built collection of tools to expose.</param>
     /// <param name="cancellationToken">Token that triggers graceful shutdown.</param>
-    /// <param name="startupLogLevel">Minimum log level to use during startup and discovery. Default is <see cref="LogLevel.Debug"/>
+    /// <param name="startupLogLevel">Minimum log level to use during startup and discovery. Default is <see cref="LogLevel.Debug"/></param>
     public async Task RunAsync(
         McpServerPrimitiveCollection<McpServerTool> toolCollection,
         CancellationToken cancellationToken,
@@ -86,35 +86,6 @@ internal sealed partial class McpServerRunner
         using var loggerFactory = CreateLoggerFactory(startupLogLevel);
         await using var server = McpServer.Create(transport, options, loggerFactory);
         await server.RunAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Starts the MCP server with the full lifecycle: creates a <see cref="McpPsHost"/>,
-    /// opens a runspace, optionally loads a script, builds tools via
-    /// <see cref="PowerShellToolFactory"/>, and runs until <paramref name="cancellationToken"/> fires.
-    /// </summary>
-    public async Task RunAsync(
-        string[] toolNames,
-        string? scriptPath,
-        string? scriptBlockText,
-        string? callerScriptRoot,
-        int jsonDepth,
-        CancellationToken cancellationToken,
-        LogLevel startupLogLevel = LogLevel.Debug)
-    {
-        ArgumentNullException.ThrowIfNull(toolNames);
-
-        var (runspace, host) = CreateConfiguredRunspace(modules: null, scriptPath, scriptBlockText, callerScriptRoot);
-        using var _ = runspace;
-        using var loggerFactory = CreateLoggerFactory(startupLogLevel);
-        var factoryLogger = loggerFactory.CreateLogger<PowerShellToolFactory>();
-
-        using var factory = new PowerShellToolFactory(runspace, host, factoryLogger, jsonDepth);
-        var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
-        foreach (var name in toolNames)
-            toolCollection.Add(factory.Create(name));
-
-        await RunAsync(toolCollection, cancellationToken, startupLogLevel);
     }
 
     /// <summary>
@@ -278,7 +249,7 @@ internal sealed partial class McpServerRunner
             if (logger.IsEnabled(LogLevel.Information))
             {
                 string excludePatternString = string.Join(", ", excludePatterns);
-                DiscoveryExcludePatternsCore(logger, excludePatternString);;
+                DiscoveryExcludePatternsCore(logger, excludePatternString);
             }
         }
 
@@ -286,27 +257,31 @@ internal sealed partial class McpServerRunner
         public static partial void DiscoveryComplete(ILogger logger, int toolCount);
     }
 
-    internal static void DotSourceScript(Runspace runspace, string scriptPath)
+    private static void InvokeAndThrowOnError(Runspace runspace, Action<PowerShell> configure, string failureContext)
     {
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
-
-        // Escape single quotes in the path to prevent script injection.
-        ps.AddScript($". '{scriptPath.Replace("'", "''", StringComparison.Ordinal)}'");
+        configure(ps);
         ps.Invoke();
 
         if (ps.HadErrors)
         {
             var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
-            throw new InvalidOperationException($"Failed to dot-source '{scriptPath}': {errors}");
+            throw new InvalidOperationException($"Failed to {failureContext}: {errors}");
         }
+    }
+
+    internal static void DotSourceScript(Runspace runspace, string scriptPath)
+    {
+        // Escape single quotes in the path to prevent script injection.
+        InvokeAndThrowOnError(
+            runspace,
+            ps => ps.AddScript($". '{scriptPath.Replace("'", "''", StringComparison.Ordinal)}'"),
+            $"dot-source '{scriptPath}'");
     }
 
     internal static void InvokeScriptBlock(Runspace runspace, string scriptBlockText, string? callerScriptRoot = null)
     {
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
         if (!string.IsNullOrEmpty(callerScriptRoot))
         {
             var virtualFile = Path.Combine(callerScriptRoot, "__psmcp_init__.ps1");
@@ -318,19 +293,17 @@ internal sealed partial class McpServerRunner
             }
 
             var scriptBlock = ast.GetScriptBlock();
-            ps.AddScript(". $args[0]").AddArgument(scriptBlock);
+            InvokeAndThrowOnError(
+                runspace,
+                ps => ps.AddScript(". $args[0]").AddArgument(scriptBlock),
+                "invoke script block");
         }
         else
         {
-            ps.AddScript(scriptBlockText);
-        }
-
-        ps.Invoke();
-
-        if (ps.HadErrors)
-        {
-            var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
-            throw new InvalidOperationException($"Failed to invoke script block: {errors}");
+            InvokeAndThrowOnError(
+                runspace,
+                ps => ps.AddScript(scriptBlockText),
+                "invoke script block");
         }
     }
 
@@ -363,16 +336,10 @@ internal sealed partial class McpServerRunner
     /// <exception cref="InvalidOperationException">Thrown when any import fails.</exception>
     internal static void ImportModules(Runspace runspace, string[] modules)
     {
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-        ps.AddCommand("Import-Module").AddParameter("Name", modules);
-        ps.Invoke();
-
-        if (ps.HadErrors)
-        {
-            var errors = string.Join("; ", ps.Streams.Error.Select(e => e.Exception.Message));
-            throw new InvalidOperationException($"Failed to import module(s) '{string.Join(", ", modules)}': {errors}");
-        }
+        InvokeAndThrowOnError(
+            runspace,
+            ps => ps.AddCommand("Import-Module").AddParameter("Name", modules),
+            $"import module(s) '{string.Join(", ", modules)}'");
     }
 
     /// <summary>

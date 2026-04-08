@@ -553,6 +553,18 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         return true;
     }
 
+    private static Dictionary<string, object?> BuildJsonSchemaForType(Type type)
+    {
+        var (jsonType, jsonFormat) = MapToJsonSchemaType(type);
+        var schema = new Dictionary<string, object?> { ["type"] = jsonType };
+        if (jsonFormat is not null)
+        {
+            schema["format"] = jsonFormat;
+        }
+
+        return schema;
+    }
+
     private Dictionary<string, object?> BuildPropertySchema(
         string commandName,
         ParameterMetadata paramMeta,
@@ -575,12 +587,10 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         }
         else
         {
-            var (jsonType, jsonFormat) = MapToJsonSchemaType(paramType);
-            property["type"] = jsonType;
-
-            if (jsonFormat is not null)
+            var typeSchema = BuildJsonSchemaForType(paramType);
+            foreach (var kv in typeSchema)
             {
-                property["format"] = jsonFormat;
+                property[kv.Key] = kv.Value;
             }
         }
 
@@ -998,10 +1008,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         // Basic/primitive types: use the existing JSON Schema mapping.
         if (IsJsonPrimitiveType(type))
         {
-            var (jsonType, jsonFormat) = MapToJsonSchemaType(type);
-            var s = new Dictionary<string, object?> { ["type"] = jsonType };
-            if (jsonFormat is not null) s["format"] = jsonFormat;
-            return s;
+            return BuildJsonSchemaForType(type);
         }
 
         // Array types: describe element type.
@@ -1035,10 +1042,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             }
             else
             {
-                var (jt, jf) = MapToJsonSchemaType(propType);
-                var ps = new Dictionary<string, object?> { ["type"] = jt };
-                if (jf is not null) ps["format"] = jf;
-                propSchemas[prop.Name] = ps;
+                propSchemas[prop.Name] = BuildJsonSchemaForType(propType);
             }
         }
 
@@ -1131,10 +1135,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             return new Dictionary<string, object?> { ["type"] = "object" };
 
         var refType = Nullable.GetUnderlyingType(referenced.PropertyType) ?? referenced.PropertyType;
-        var (jt, jf) = MapToJsonSchemaType(refType);
-        var schema = new Dictionary<string, object?> { ["type"] = jt };
-        if (jf is not null) schema["format"] = jf;
-        return schema;
+        return BuildJsonSchemaForType(refType);
     }
 
     /// <summary>
@@ -1148,10 +1149,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
 
         var returnType = Nullable.GetUnderlyingType(code.GetCodeReference.ReturnType)
                          ?? code.GetCodeReference.ReturnType;
-        var (jt, jf) = MapToJsonSchemaType(returnType);
-        var schema = new Dictionary<string, object?> { ["type"] = jt };
-        if (jf is not null) schema["format"] = jf;
-        return schema;
+        return BuildJsonSchemaForType(returnType);
     }
 
     /// <summary>
@@ -1164,10 +1162,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             return new Dictionary<string, object?> { ["type"] = "object" };
 
         var valType = Nullable.GetUnderlyingType(note.Value.GetType()) ?? note.Value.GetType();
-        var (jt, jf) = MapToJsonSchemaType(valType);
-        var schema = new Dictionary<string, object?> { ["type"] = jt };
-        if (jf is not null) schema["format"] = jf;
-        return schema;
+        return BuildJsonSchemaForType(valType);
     }
 
     /// <summary>
