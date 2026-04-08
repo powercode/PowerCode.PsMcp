@@ -57,10 +57,11 @@ internal sealed partial class McpServerRunner
     /// </summary>
     /// <param name="toolCollection">Pre-built collection of tools to expose.</param>
     /// <param name="cancellationToken">Token that triggers graceful shutdown.</param>
+    /// <param name="startupLogLevel">Minimum log level to use during startup and discovery. Default is <see cref="LogLevel.Debug"/>
     public async Task RunAsync(
         McpServerPrimitiveCollection<McpServerTool> toolCollection,
         CancellationToken cancellationToken,
-        LogLevel startupLogLevel = LogLevel.Warning)
+        LogLevel startupLogLevel = LogLevel.Debug)
     {
         ArgumentNullException.ThrowIfNull(toolCollection);
         cancellationToken.ThrowIfCancellationRequested();
@@ -99,7 +100,7 @@ internal sealed partial class McpServerRunner
         string? callerScriptRoot,
         int jsonDepth,
         CancellationToken cancellationToken,
-        LogLevel startupLogLevel = LogLevel.Warning)
+        LogLevel startupLogLevel = LogLevel.Debug)
     {
         ArgumentNullException.ThrowIfNull(toolNames);
 
@@ -247,7 +248,7 @@ internal sealed partial class McpServerRunner
         [LoggerMessage(EventId = 2001, Level = LogLevel.Information, Message = "Discovery post-load: {allCount} commands ({deltaCount} new)")]
         public static partial void DiscoveryPostLoad(ILogger logger, int allCount, int deltaCount);
 
-        [LoggerMessage(EventId = 2002, Level = LogLevel.Information, Message = "Discovery include patterns: {includePatterns}")]
+        [LoggerMessage(EventId = 2002, Level = LogLevel.Information, Message = "Discovery include patterns: {includePatterns}", SkipEnabledCheck = true)]
         private static partial void DiscoveryIncludePatternsCore(ILogger logger, string includePatterns);
 
         public static void DiscoveryIncludePatterns(ILogger logger, string[]? includePatterns)
@@ -257,14 +258,11 @@ internal sealed partial class McpServerRunner
                 return;
             }
 
-            if (!logger.IsEnabled(LogLevel.Information))
+            if (logger.IsEnabled(LogLevel.Information))
             {
-                return;
+                string includePatternString = string.Join(", ", includePatterns);
+                DiscoveryIncludePatternsCore(logger, includePatternString);
             }
-
-#pragma warning disable CA1873 // This value is intentionally computed only when logging is enabled.
-            DiscoveryIncludePatternsCore(logger, string.Join(", ", includePatterns));
-#pragma warning restore CA1873
         }
 
         [LoggerMessage(EventId = 2003, Level = LogLevel.Information, Message = "Discovery exclude patterns: {excludePatterns}")]
@@ -277,14 +275,11 @@ internal sealed partial class McpServerRunner
                 return;
             }
 
-            if (!logger.IsEnabled(LogLevel.Information))
+            if (logger.IsEnabled(LogLevel.Information))
             {
-                return;
+                string excludePatternString = string.Join(", ", excludePatterns);
+                DiscoveryExcludePatternsCore(logger, excludePatternString);;
             }
-
-#pragma warning disable CA1873 // This value is intentionally computed only when logging is enabled.
-            DiscoveryExcludePatternsCore(logger, string.Join(", ", excludePatterns));
-#pragma warning restore CA1873
         }
 
         [LoggerMessage(EventId = 2004, Level = LogLevel.Information, Message = "Discovery complete: {toolCount} tools registered")]
