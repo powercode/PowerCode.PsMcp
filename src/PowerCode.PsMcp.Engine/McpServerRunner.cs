@@ -405,7 +405,7 @@ internal sealed partial class McpServerRunner
     ///   so that baseline commands can only be included when their module is declared via <c>-Module</c>.
     /// </param>
     /// <param name="includePatterns">
-    ///   When non-empty, commands from <paramref name="includePool"/> matching any pattern are added.
+    ///   When non-empty, only commands from <paramref name="includePool"/> matching any pattern are kept.
     /// </param>
     /// <param name="excludePatterns">
     ///   When non-empty, commands matching any pattern are removed from the candidates.
@@ -417,19 +417,24 @@ internal sealed partial class McpServerRunner
         WildcardPattern[]? includePatterns,
         WildcardPattern[]? excludePatterns)
     {
-        // Start with commands introduced after baseline (the delta).
-        var candidates = new HashSet<string>(allCommands, StringComparer.OrdinalIgnoreCase);
-        candidates.ExceptWith(baseline);
-
-        // Include patterns pull in additional commands, but only from the explicit include pool.
-        // This ensures baseline commands can only be included when their module is declared via -Module.
+        // Default behavior (no include): expose the discovery delta only.
+        // With include patterns: treat include as a filter over the explicit include pool.
+        // This keeps behavior intuitive for wildcard filtering while still allowing baseline
+        // commands only when their module is declared via -Module.
+        HashSet<string> candidates;
         if (includePatterns is { Length: > 0 })
         {
+            candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var cmd in includePool)
             {
                 if (includePatterns.Any(p => p.IsMatch(cmd)))
                     candidates.Add(cmd);
             }
+        }
+        else
+        {
+            candidates = new HashSet<string>(allCommands, StringComparer.OrdinalIgnoreCase);
+            candidates.ExceptWith(baseline);
         }
 
         // Exclude patterns remove matching commands from the candidate set.

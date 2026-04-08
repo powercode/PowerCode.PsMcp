@@ -45,7 +45,7 @@ public sealed class McpServerRunnerDiscoveryTests
     }
 
     [TestMethod]
-    public void DiscoverCommands_WithInclude_AddsCommandsFromExplicitPool()
+    public void DiscoverCommands_WithInclude_FiltersToMatchingCommandsFromExplicitPool()
     {
         var baseline = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "A", "B" };
         var all = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "A", "B", "C" };
@@ -55,10 +55,10 @@ public sealed class McpServerRunnerDiscoveryTests
 
         var result = McpServerRunner.DiscoverCommands(baseline, all, includePool, include, null);
 
-        // C is in delta; A is pulled in from includePool by include pattern.
-        Assert.HasCount(2, result);
+        // Include acts as a filter: only A matches A*.
+        Assert.HasCount(1, result);
         Assert.Contains("A", result);
-        Assert.Contains("C", result);
+        Assert.DoesNotContain("C", result);
     }
 
     [TestMethod]
@@ -72,9 +72,10 @@ public sealed class McpServerRunnerDiscoveryTests
 
         var result = McpServerRunner.DiscoverCommands(baseline, all, includePool, include, null);
 
-        // A is not in includePool, so the pattern cannot add it.
+        // A is not in includePool, so the pattern cannot select it.
         Assert.DoesNotContain("A", result, "A must not be added when it is not in the include pool.");
-        Assert.Contains("C", result);
+        Assert.DoesNotContain("C", result, "C does not match the include pattern and should be filtered out.");
+        Assert.IsEmpty(result);
     }
 
     [TestMethod]
@@ -104,11 +105,12 @@ public sealed class McpServerRunnerDiscoveryTests
 
         var result = McpServerRunner.DiscoverCommands(baseline, all, includePool, include, exclude);
 
-        // Delta: C, D. Include adds A from pool. Exclude removes D.
+        // Include filter selects A only; Exclude then has nothing else to remove.
         Assert.Contains("A", result, "A should be included via Include pattern (it is in the pool).");
-        Assert.Contains("C", result, "C should be in delta.");
+        Assert.DoesNotContain("C", result, "C does not match include and should be filtered out.");
         Assert.DoesNotContain("D", result, "D should be removed by Exclude pattern.");
         Assert.DoesNotContain("B", result, "B was in baseline and not in pool.");
+        Assert.HasCount(1, result);
     }
 
     [TestMethod]

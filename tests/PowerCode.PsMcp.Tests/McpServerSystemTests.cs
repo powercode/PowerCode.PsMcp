@@ -173,7 +173,7 @@ public sealed class McpServerSystemTests
     }
 
     [TestMethod]
-    public async Task ListToolsAsync_DiscoveryModeWithInclude_AddsBaselineCommand()
+    public async Task ListToolsAsync_DiscoveryModeWithInclude_FiltersToIncludedCommands()
     {
         var clientToServer = new Pipe();
         var serverToClient = new Pipe();
@@ -205,10 +205,10 @@ public sealed class McpServerSystemTests
         var tools = await client.ListToolsAsync(options: null, cts.Token);
         var toolNames = tools.Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        Assert.Contains("Get-CurrentWeather", toolNames,
-            "'Get-CurrentWeather' should be discovered via scriptblock.");
         Assert.Contains("Get-Process", toolNames,
             "'Get-Process' should appear because it was explicitly included.");
+        Assert.DoesNotContain("Get-CurrentWeather", toolNames,
+            "'Get-CurrentWeather' should be filtered out because it does not match -Include Get-Process.");
 
         await cts.CancelAsync();
         try { await serverTask; } catch (OperationCanceledException) { }
