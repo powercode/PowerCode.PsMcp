@@ -102,52 +102,19 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
 
         try
         {
-            // Validate that at least one source is provided.
-            if (Module is null && ScriptBlock is null && ScriptPath is null)
+            if (!ValidateDiscoverySource())
             {
-                var ex = new PSArgumentException(
-                    "At least one of -Module, -ScriptBlock, or -ScriptPath must be provided.",
-                    nameof(Module));
-                ThrowTerminatingError(new ErrorRecord(ex, "NoDiscoverySource", ErrorCategory.InvalidArgument, null));
                 return;
             }
 
-            // Convert the Hashtable CommandConfiguration to a case-insensitive IDictionary<string, McpToolConfig>.
-            Dictionary<string, McpToolConfig>? configDict = null;
-            if (CommandConfiguration is not null)
-            {
-                configDict = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase);
-                foreach (DictionaryEntry entry in CommandConfiguration)
-                {
-                    var commandName = entry.Key.ToString()!;
-                    try
-                    {
-                        configDict[commandName] = LanguagePrimitives.ConvertTo<McpToolConfig>(entry.Value);
-                    }
-                    catch (PSInvalidCastException ex)
-                    {
-                        ThrowTerminatingError(new ErrorRecord(
-                            new PSArgumentException(
-                                $"Value for key '{commandName}' must be a McpToolConfig (use New-McpToolConfig).", ex),
-                            "InvalidCommandConfiguration",
-                            ErrorCategory.InvalidArgument,
-                            entry.Value));
-                    }
-                }
-            }
+            var configDict = BuildCommandConfiguration();
 
-            string? callerScriptRoot = null;
-            if (ScriptBlock is not null)
-            {
-                callerScriptRoot = !string.IsNullOrEmpty(ScriptBlock.File)
-                    ? Path.GetDirectoryName(ScriptBlock.File)
-                    : MyInvocation.PSScriptRoot;
-            }
+            var callerScriptRoot = ResolveCallerScriptRoot();
 
-            var startupLogLevel = DiagnosticLogging.IsPresent ? LogLevel.Debug : LogLevel.Warning;
+            var startupLogLevel = DiagnosticLogging.IsPresent ? LogLevel.Trace : LogLevel.Warning;
 
 #pragma warning disable CA2025 // GetResult() blocks synchronously by design for cmdlet execution.
-        runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, _cts.Token, startupLogLevel)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, _cts.Token, startupLogLevel)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025
@@ -164,6 +131,85 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
         {
             ThrowTerminatingError(new ErrorRecord(ex, "McpServerError", ErrorCategory.InvalidOperation, null));
         }
+    }
+
+    /// <summary>
+    /// Converts the PowerShell hashtable parameter into a case-insensitive dictionary
+    /// with strongly typed <see cref="McpToolConfig"/> values.
+    /// </summary>
+    /// <returns>
+    /// A dictionary keyed by command name, or <see langword="null"/> when
+    /// <see cref="CommandConfiguration"/> is not provided.
+    /// </returns>
+    private Dictionary<string, McpToolConfig>? BuildCommandConfiguration()
+    {
+        if (CommandConfiguration is null)
+        {
+            return null;
+        }
+
+        var configDict = new Dictionary<string, McpToolConfig>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in CommandConfiguration)
+        {
+            var commandName = entry.Key.ToString()!;
+            try
+            {
+                configDict[commandName] = LanguagePrimitives.ConvertTo<McpToolConfig>(entry.Value);
+            }
+            catch (PSInvalidCastException ex)
+            {
+                ThrowTerminatingError(new ErrorRecord(
+                    new PSArgumentException(
+                        $"Value for key '{commandName}' must be a McpToolConfig (use New-McpToolConfig).", ex),
+                    "InvalidCommandConfiguration",
+                    ErrorCategory.InvalidArgument,
+                    entry.Value));
+            }
+        }
+
+        return configDict;
+    }
+
+    /// <summary>
+    /// Validates that at least one discovery source parameter is provided.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> when a discovery source is configured; otherwise
+    /// emits a terminating error and returns <see langword="false"/>.
+    /// </returns>
+    private bool ValidateDiscoverySource()
+    {
+        if (Module is not null || ScriptBlock is not null || ScriptPath is not null)
+        {
+            return true;
+        }
+
+        var ex = new PSArgumentException(
+            "At least one of -Module, -ScriptBlock, or -ScriptPath must be provided.",
+            nameof(Module));
+        ThrowTerminatingError(new ErrorRecord(ex, "NoDiscoverySource", ErrorCategory.InvalidArgument, null));
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves the caller script root used to interpret relative paths from an
+    /// inline script block invocation context.
+    /// </summary>
+    /// <returns>
+    /// The script directory when <see cref="ScriptBlock"/> has a backing file,
+    /// <see cref="InvocationInfo.PSScriptRoot"/> for interactive callers, or
+    /// <see langword="null"/> when no script block was provided.
+    /// </returns>
+    private string? ResolveCallerScriptRoot()
+    {
+        if (ScriptBlock is null)
+        {
+            return null;
+        }
+
+        return !string.IsNullOrEmpty(ScriptBlock.File)
+            ? Path.GetDirectoryName(ScriptBlock.File)
+            : MyInvocation.PSScriptRoot;
     }
 
     /// <inheritdoc />
