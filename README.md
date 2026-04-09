@@ -266,28 +266,42 @@ dotnet test PowerCode.PsMcp.slnx -c Debug
 5. Each tool's description and parameter schema are populated from `Get-Help`.
 6. An MCP server is started over stdin/stdout using the [ModelContextProtocol .NET SDK](https://github.com/modelcontextprotocol/csharp-sdk).
 
-## Perfect ParameterSet Input and Output Mapping
+## ParameterSet Input and Output Mapping
 
-When a command has multiple parameter sets, PowerCode.PsMcp uses ParameterSetName as an input discriminator and can project output schema per set when metadata is available.
+When a command has multiple parameter sets, PowerCode.PsMcp exposes each set as a separate variant in a `oneOf` input schema and can project a per-set output schema when `OutputType` metadata is available.
+
+### Input schema for multi-set commands
+
+The input schema is `{"type":"object","oneOf":[...]}` with one variant per active parameter set. Each variant:
+
+- Contains only the parameters that belong to that set.
+- Sets `additionalProperties: false` so clients know exactly which parameters are valid.
+- Uses the parameter set name as its `description` (default set is labeled `Name (default)`).
+
+The AI client selects a parameter set by providing the right required parameters — no explicit `ParameterSetName` field is needed or declared in the schema.
+
+#### Optional ParameterSetName passthrough
+
+A client may include `ParameterSetName` as an extra key in the input object as a tracking hint. The server strips it before invoking PowerShell (preventing a binding error) and echoes it into the `ParameterSetName` field of the structured output envelope. The server does not auto-detect which parameter set was resolved at runtime.
 
 ### How to get deterministic per-set output mapping
 
-1. Define explicit parameter sets with CmdletBinding(DefaultParameterSetName=...).
-2. Declare OutputType(..., ParameterSetName=...) for every parameter set.
-3. Ensure each OutputType ParameterSetName exactly matches the parameter set name.
+1. Define explicit parameter sets with `CmdletBinding(DefaultParameterSetName=...)`.
+2. Declare `OutputType(..., ParameterSetName=...)` for every parameter set.
+3. Ensure each `OutputType` `ParameterSetName` exactly matches the parameter set name.
 4. If a set can return multiple CLR types, declare all of them for that set.
-5. Keep OutputType declarations aligned with real runtime output.
+5. Keep `OutputType` declarations aligned with real runtime output.
 
-For multi-set commands, PowerCode.PsMcp adds ParameterSetName to structured output so clients can align the selected input set with the matching output schema variant.
+When ≥ 2 parameter sets have output type mappings, the output schema becomes `{"type":"object","oneOf":[...]}` where each variant has a `ParameterSetName` const field (the set name) and a per-set `items` array schema. Parameter sets with no mapping are omitted from the `oneOf`.
 
 ### Fallback behavior
 
-If perfect metadata is not available, output schema generation follows a deterministic fallback ladder:
+If complete metadata is not available, output schema generation follows a deterministic fallback ladder:
 
-1. Tier 1: Full per-set mapping from OutputType(..., ParameterSetName=...).
-2. Tier 2: Partial per-set mapping, with missing sets filled from __AllParameterSets declarations.
-3. Tier 3: No per-set linkage available, so output items use a oneOf union of CommandInfo.OutputType.
-4. Tier 4: No output metadata, so outputSchema is omitted.
+1. Tier 1: Full per-set mapping — all active sets have explicit `OutputType(..., ParameterSetName=...)` → `oneOf` output schema.
+2. Tier 2: Partial per-set mapping — some sets fall back to `__AllParameterSets` types; ≥ 2 sets covered → `oneOf` output schema; uncovered sets are omitted.
+3. Tier 3: No per-set linkage — flat `{"items":[...]}` schema built from `CommandInfo.OutputType` (items may use `oneOf` internally when multiple types are declared).
+4. Tier 4: No output metadata — `outputSchema` is omitted.
 
 ### When to split into separate tools
 
