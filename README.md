@@ -22,6 +22,8 @@ Import-Module ./artifacts/bin/PowerCode.PsMcp/release/PowerCode.PsMcp.psd1
 
 At least one of `-Module`, `-ScriptBlock`, or `-ScriptPath` must be provided.
 
+By default, tool calls can run in parallel using a runspace pool (up to 8 runspaces). Use `-NoParallel` to force serialized execution in a single runspace.
+
 ### Expose all commands from a module
 
 ```powershell
@@ -73,16 +75,32 @@ Start-McpServer -Module Microsoft.PowerShell.Utility -Include 'Get-Date'
 
 ```powershell
 $toolConfig = @{
-  'Get-Item' = New-McpToolConfig -Name 'list-items' -Property Name, FullName
-  'Get-Date' = New-McpToolConfig -Name 'now' -Depth 4
+  'Get-Item' = New-McpToolConfig -Name 'list-items' -Property Name, FullName -ExcludeProperty PSPath
+  'Get-Process' = New-McpToolConfig -Name 'proc-by-name' -ParameterSets Name -Depth 4
 }
 
 Start-McpServer -Module MyModule -CommandConfiguration $toolConfig
 ```
 
 Keys are the real PowerShell command names; values are `McpToolConfig` objects created with
-`New-McpToolConfig`. Each config can rename the tool, select or exclude properties, and override
-the JSON depth for that command only.
+`New-McpToolConfig`. Each config can rename the tool, select or exclude properties, filter input
+schema to specific parameter sets, and override the JSON depth for that command only.
+
+### Enable startup diagnostics
+
+```powershell
+Start-McpServer -Module MyModule -DiagnosticLogging
+```
+
+Enables verbose startup diagnostics for discovery and schema mapping (emitted to stderr logs).
+
+### Force serialized tool execution
+
+```powershell
+Start-McpServer -Module MyModule -NoParallel
+```
+
+Disables runspace-pool concurrency and executes all tool calls in a single runspace. Use this when tools depend on shared session state.
 
 ### Increase JSON serialisation depth
 
@@ -224,8 +242,10 @@ The function's **comment-based help** (`.SYNOPSIS`, `.PARAMETER`) is extracted v
 | `-Exclude` | `string[]` | Wildcard patterns for commands to exclude. |
 | `-CommandConfiguration` | `hashtable` | Maps command names (keys) to `McpToolConfig` values for per-command naming, property selection, and depth overrides. |
 | `-ScriptPath` | `string` | Path to a `.ps1` script to dot-source before starting. |
-| `-ScriptBlock` | `scriptblock` | Script block invoked before starting the server. |
+| `-ScriptBlock` | `scriptblock` | Script block invoked before starting the server. If both `-ScriptPath` and `-ScriptBlock` are provided, `-ScriptPath` is used. |
 | `-Depth` | `int` | JSON serialisation depth for tool output (1–10, default 2). |
+| `-DiagnosticLogging` | `switch` | Enables startup diagnostics for command discovery and schema mapping. |
+| `-NoParallel` | `switch` | Disables parallel tool invocation and serializes calls in a single runspace. |
 
 ## Building and testing
 
