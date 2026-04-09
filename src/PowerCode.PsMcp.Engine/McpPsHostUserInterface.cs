@@ -19,13 +19,21 @@ internal sealed class McpPsHostUserInterface : PSHostUserInterface
     private readonly McpPsHostRawUserInterface _rawUi = new();
 
     /// <summary>
-    /// Per-invocation progress reporter. When set, <see cref="WriteProgress"/> forwards
-    /// <see cref="ProgressRecord"/> updates and <see cref="WriteWarningLine"/>,
-    /// <see cref="WriteVerboseLine"/>, and <see cref="WriteDebugLine"/> send message-only
-    /// notifications (Progress = 0, Total = null) to the MCP client instead of writing to stderr.
-    /// Must only be mutated while the runspace lock is held.
+    /// Per-invocation progress reporter stored in <see cref="AsyncLocal{T}"/> so that
+    /// concurrent tool invocations on a <see cref="System.Management.Automation.Runspaces.RunspacePool"/>
+    /// each see their own reporter without cross-talk.
     /// </summary>
-    internal IProgress<ProgressNotificationValue>? Progress { get; set; }
+    private static readonly AsyncLocal<IProgress<ProgressNotificationValue>?> s_progress = new();
+
+    /// <summary>
+    /// Gets the progress reporter for the current async context.
+    /// </summary>
+    internal static IProgress<ProgressNotificationValue>? Progress => s_progress.Value;
+
+    /// <summary>
+    /// Sets the progress reporter for the current async context.
+    /// </summary>
+    internal static void SetProgress(IProgress<ProgressNotificationValue>? progress) => s_progress.Value = progress;
 
     /// <inheritdoc />
     public override PSHostRawUserInterface RawUI => _rawUi;

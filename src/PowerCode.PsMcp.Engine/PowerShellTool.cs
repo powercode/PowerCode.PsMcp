@@ -52,8 +52,9 @@ internal sealed partial class PowerShellTool : McpServerTool
 {
     private readonly string _commandName;
     private readonly Tool _protocolTool;
-    private readonly Runspace _runspace;
-    private readonly SemaphoreSlim _runspaceLock;
+    private readonly Runspace? _runspace;
+    private readonly SemaphoreSlim? _runspaceLock;
+    private readonly ManagedRunspacePool? _runspacePool;
     private readonly int _jsonDepth;
     private readonly McpPsHost _host;
     private readonly ILogger _stderrLogger;
@@ -61,7 +62,7 @@ internal sealed partial class PowerShellTool : McpServerTool
     private readonly string[]? _excludeProperty;
 
     /// <summary>
-    /// Initialises a new tool that wraps <paramref name="commandName"/>.
+    /// Initialises a new tool that wraps <paramref name="commandName"/> using a single shared runspace.
     /// </summary>
     /// <param name="commandName">The PowerShell command name to invoke.</param>
     /// <param name="protocolTool">MCP protocol representation of the tool.</param>
@@ -87,17 +88,64 @@ internal sealed partial class PowerShellTool : McpServerTool
         ILogger stderrLogger,
         string[]? selectProperty = null,
         string[]? excludeProperty = null)
+        : this(commandName, protocolTool, runspace, runspaceLock, runspacePool: null, jsonDepth, host, stderrLogger, selectProperty, excludeProperty)
+    {
+        ArgumentNullException.ThrowIfNull(runspace);
+        ArgumentNullException.ThrowIfNull(runspaceLock);
+    }
+
+    /// <summary>
+    /// Initialises a new tool that wraps <paramref name="commandName"/> using a <see cref="ManagedRunspacePool"/>
+    /// for parallel execution.
+    /// </summary>
+    /// <param name="commandName">The PowerShell command name to invoke.</param>
+    /// <param name="protocolTool">MCP protocol representation of the tool.</param>
+    /// <param name="runspacePool">Pool of individually-initialized runspaces for concurrent tool invocations.</param>
+    /// <param name="jsonDepth">Depth passed to <c>ConvertTo-Json</c>.</param>
+    /// <param name="host">
+    ///   The <see cref="McpPsHost"/> associated with the pool.
+    ///   <see cref="System.Management.Automation.ProgressRecord"/> updates are forwarded
+    ///   to the MCP client as progress notifications using <see cref="AsyncLocal{T}"/>.
+    /// </param>
+    /// <param name="stderrLogger">Process-local logger used to write tool execution diagnostics to stderr.</param>
+    /// <param name="selectProperty">Properties to include in tool output via <c>Select-Object -Property</c>.</param>
+    /// <param name="excludeProperty">Properties to exclude from tool output via <c>Select-Object -ExcludeProperty</c>.</param>
+    public PowerShellTool(
+        string commandName,
+        Tool protocolTool,
+        ManagedRunspacePool runspacePool,
+        int jsonDepth,
+        McpPsHost host,
+        ILogger stderrLogger,
+        string[]? selectProperty = null,
+        string[]? excludeProperty = null)
+        : this(commandName, protocolTool, runspace: null, runspaceLock: null, runspacePool, jsonDepth, host, stderrLogger, selectProperty, excludeProperty)
+    {
+        ArgumentNullException.ThrowIfNull(runspacePool);
+    }
+
+    /// <summary>Private delegating constructor shared by both public overloads.</summary>
+    private PowerShellTool(
+        string commandName,
+        Tool protocolTool,
+        Runspace? runspace,
+        SemaphoreSlim? runspaceLock,
+        ManagedRunspacePool? runspacePool,
+        int jsonDepth,
+        McpPsHost host,
+        ILogger stderrLogger,
+        string[]? selectProperty,
+        string[]? excludeProperty)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
         ArgumentNullException.ThrowIfNull(protocolTool);
-        ArgumentNullException.ThrowIfNull(runspace);
-        ArgumentNullException.ThrowIfNull(runspaceLock);
         ArgumentNullException.ThrowIfNull(stderrLogger);
 
         _commandName = commandName;
         _protocolTool = protocolTool;
         _runspace = runspace;
         _runspaceLock = runspaceLock;
+        _runspacePool = runspacePool;
         _jsonDepth = jsonDepth;
         _host = host;
         _stderrLogger = stderrLogger;
@@ -122,9 +170,42 @@ internal sealed partial class PowerShellTool : McpServerTool
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        return _runspacePool is not null
+            ? await InvokeWithPoolAsync(request, cancellationToken).ConfigureAwait(false)
+            : await InvokeWithLockAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs the tool using a <see cref="ManagedRunspacePool"/> — rents a runspace for the duration.</summary>
+    private async ValueTask<CallToolResult> InvokeWithPoolAsync(
+        RequestContext<CallToolRequestParams> request,
+        CancellationToken cancellationToken)
+    {
+        IProgress<ProgressNotificationValue>? progress = null;
+        var progressToken = request.Params.ProgressToken;
+        if (progressToken.HasValue)
+            progress = new McpProgressReporter(request.Server, progressToken.Value);
+
+        var runspace = await _runspacePool!.RentAsync(cancellationToken).ConfigureAwait(false);
+        McpPsHost.SetProgressReporter(progress);
         try
         {
-            await _runspaceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return await InvokeCoreAsync(request, runspace, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            McpPsHost.SetProgressReporter(null);
+            _runspacePool.Return(runspace);
+        }
+    }
+
+    /// <summary>Runs the tool using a single runspace protected by <see cref="_runspaceLock"/>.</summary>
+    private async ValueTask<CallToolResult> InvokeWithLockAsync(
+        RequestContext<CallToolRequestParams> request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _runspaceLock!.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -137,29 +218,24 @@ internal sealed partial class PowerShellTool : McpServerTool
 
         try
         {
-            // Build a progress reporter for this request when the client supplied a
-            // progress token. McpServer extends McpSession, so NotifyProgressAsync
-            // is available on it. Progress is routed through the host because
-            // WriteProgress is called in real-time by the PS engine during execution.
             IProgress<ProgressNotificationValue>? progress = null;
             var progressToken = request.Params.ProgressToken;
             if (progressToken.HasValue)
                 progress = new McpProgressReporter(request.Server, progressToken.Value);
 
-            _host.SetProgressReporter(progress);
+            McpPsHost.SetProgressReporter(progress);
             try
             {
-                return await InvokeCoreAsync(request, cancellationToken)
-                    .ConfigureAwait(false);
+                return await InvokeCoreAsync(request, _runspace!, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                _host.SetProgressReporter(null);
+                McpPsHost.SetProgressReporter(null);
             }
         }
         finally
         {
-            _runspaceLock.Release();
+            _runspaceLock!.Release();
         }
     }
 
@@ -167,6 +243,7 @@ internal sealed partial class PowerShellTool : McpServerTool
 
     private async Task<CallToolResult> InvokeCoreAsync(
         RequestContext<CallToolRequestParams> request,
+        Runspace runspace,
         CancellationToken cancellationToken)
     {
         using var toolLoggerScope = McpLogging.CreateToolLoggerScope(request, _stderrLogger, _commandName);
@@ -175,57 +252,61 @@ internal sealed partial class PowerShellTool : McpServerTool
         using var serializerInput = new PSDataCollection<PSObject>();
         var classifier = new PipelineClassifier(serializerInput, logger);
 
-        using var commandOutput = new PSDataCollection<PSObject>();
-        commandOutput.DataAdded += classifier.OnDataAdded;
+        string? parameterSetName;
 
-        using var commandPs = PowerShell.Create();
-        commandPs.Runspace = _runspace;
-        var parameterSetName = ConfigurePipelineCommand(commandPs, request.Params.Arguments);
-        
-        try
+        using (var commandPs = PowerShell.Create())
+        using (var commandOutput = new PSDataCollection<PSObject>())
         {
-            await RunCommandAsync(commandPs, commandOutput, cancellationToken).ConfigureAwait(false);
-            if (cancellationToken.IsCancellationRequested)
+            commandOutput.DataAdded += classifier.OnDataAdded;
+
+            commandPs.Runspace = runspace;
+            parameterSetName = ConfigurePipelineCommand(commandPs, request.Params.Arguments);
+
+            try
             {
-                classifier.TextLines.Add("CANCELLED: Tool invocation was cancelled.");
+                await RunCommandAsync(commandPs, commandOutput, cancellationToken).ConfigureAwait(false);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    classifier.TextLines.Add("CANCELLED: Tool invocation was cancelled.");
+                    serializerInput.Complete();
+                    return BuildResult(serializerInput, classifier.TextLines, hasErrors: true, classifier.ErrorRecords, parameterSetName, runspace);
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                var errorRecord = ex switch
+                {
+                    ActionPreferenceStopException actionPreferenceStopException => actionPreferenceStopException.ErrorRecord,
+                    CmdletInvocationException cmdletInvocationException => cmdletInvocationException.ErrorRecord,
+                    RuntimeException runtimeException => runtimeException.ErrorRecord,
+                    _ => null
+                };
+
+                if (errorRecord is not null)
+                {
+                    classifier.ErrorRecords.Add(errorRecord);
+                }
+
+                classifier.TextLines.Add($"ERROR: {ex.Message}");
+                if (!string.IsNullOrWhiteSpace(errorRecord?.ScriptStackTrace))
+                {
+                    classifier.TextLines.Add(errorRecord.ScriptStackTrace);
+                }
+
                 serializerInput.Complete();
-                return BuildResult(serializerInput, classifier.TextLines, hasErrors: true, classifier.ErrorRecords, parameterSetName);
+                return BuildResult(serializerInput, classifier.TextLines, hasErrors: true, classifier.ErrorRecords, parameterSetName, runspace);
             }
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            var errorRecord = ex switch
-            {
-                ActionPreferenceStopException actionPreferenceStopException => actionPreferenceStopException.ErrorRecord,
-                CmdletInvocationException cmdletInvocationException => cmdletInvocationException.ErrorRecord,
-                RuntimeException runtimeException => runtimeException.ErrorRecord,
-                _ => null
-            };
-
-            if (errorRecord is not null)
-            {
-                classifier.ErrorRecords.Add(errorRecord);
-            }
-
-            classifier.TextLines.Add($"ERROR: {ex.Message}");
-            if (!string.IsNullOrWhiteSpace(errorRecord?.ScriptStackTrace))
-            {
-                classifier.TextLines.Add(errorRecord.ScriptStackTrace);
-            }
-
-            serializerInput.Complete();
-            return BuildResult(serializerInput, classifier.TextLines, hasErrors: true, classifier.ErrorRecords, parameterSetName);
         }
 
         serializerInput.Complete();
-        return BuildResult(serializerInput, classifier.TextLines, classifier.HasErrors, classifier.ErrorRecords, parameterSetName);
+        return BuildResult(serializerInput, classifier.TextLines, classifier.HasErrors, classifier.ErrorRecords, parameterSetName, runspace);
     }
 
     /// <summary>Creates a configured serializer pipeline (Select-Object + ConvertTo-Json).</summary>
-    private PowerShell CreateSerializerPs()
+    private PowerShell CreateSerializerPs(Runspace runspace)
     {
         var ps = PowerShell.Create();
-        ps.Runspace = _runspace;
+        ps.Runspace = runspace;
         AddPropertySelectionCommand(ps);
         AddConvertToJsonCommand(ps);
         return ps;
@@ -252,7 +333,8 @@ internal sealed partial class PowerShellTool : McpServerTool
         List<string> textLines,
         bool hasErrors,
         List<ErrorRecord> errorRecords,
-        string? parameterSetName)
+        string? parameterSetName,
+        Runspace runspace)
     {
         // Produce structured JSON in an {"items": [...]} envelope matching pipeline semantics.
         // When outputSchema is defined, always include structuredContent (even for empty pipelines).
@@ -262,7 +344,7 @@ internal sealed partial class PowerShellTool : McpServerTool
         {
             var itemsElement = serializerInput.Count == 0
                 ? JsonSerializer.SerializeToElement(Array.Empty<object>())
-                : SerializeToJsonArray(CreateSerializerPs(), serializerInput);
+                : SerializeToJsonArray(CreateSerializerPs(runspace), serializerInput);
 
             structuredContent = ConvertToJsonEnvelope(itemsElement, parameterSetName, errorRecords);
         }

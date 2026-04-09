@@ -81,10 +81,20 @@ internal sealed partial class McpServerRunner
     }
 
     /// <summary>
+    /// Maximum number of runspaces in the pool when parallel execution is enabled.
+    /// </summary>
+    internal const int MaxPoolSize = 8;
+
+    /// <summary>
     /// Starts the MCP server using command discovery: snapshots baseline commands, configures
     /// a runspace, discovers new commands, applies Include/Exclude filters and CommandConfiguration, then
     /// runs until <paramref name="cancellationToken"/> fires.
     /// </summary>
+    /// <param name="noParallel">
+    ///   When <see langword="true"/>, a single runspace protected by a lock is used (current behaviour).
+    ///   When <see langword="false"/> (default), a <see cref="ManagedRunspacePool"/> with up to
+    ///   <see cref="MaxPoolSize"/> runspaces enables concurrent tool invocations.
+    /// </param>
     /// <exception cref="InvalidOperationException">
     ///   Thrown when no commands are discovered after filtering.
     /// </exception>
@@ -97,14 +107,30 @@ internal sealed partial class McpServerRunner
         IDictionary<string, McpToolConfig>? commandConfig,
         int jsonDepth,
         LogLevel startupLogLevel,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool noParallel = false)
     {
         var baseline = GetDefaultCommandNames();
         var (runspace, host) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
         using var _ = runspace;
         using var stderrLoggerFactory = McpLogging.CreateStderrLoggerFactory(startupLogLevel);
         var discoveryLogger = stderrLoggerFactory.CreateLogger<PowerShellToolFactory>();
-        using var factory = new PowerShellToolFactory(runspace, host, stderrLoggerFactory, jsonDepth);
+
+        ManagedRunspacePool? pool = null;
+        PowerShellToolFactory factory;
+
+        if (noParallel)
+        {
+            factory = new PowerShellToolFactory(runspace, host, stderrLoggerFactory, jsonDepth);
+        }
+        else
+        {
+            pool = CreateManagedRunspacePool(host, modules, scriptPath, scriptBlockText, callerScriptRoot);
+            factory = new PowerShellToolFactory(runspace, pool, host, stderrLoggerFactory, jsonDepth);
+        }
+
+        using var __ = pool;
+        using var factoryDisposable = factory;
 
         var toolCollection = BuildDiscoveredToolCollection(
             baseline,
@@ -160,9 +186,22 @@ internal sealed partial class McpServerRunner
     /// Creates a new runspace, imports modules and dot-sources/invokes any script,
     /// and returns the ready-to-use runspace.
     /// </summary>
-    private static (Runspace Runspace, McpPsHost Host) CreateConfiguredRunspace(string[]? modules, string? scriptPath, string? scriptBlockText, string? callerScriptRoot)
+    /// <param name="modules">Modules to import.</param>
+    /// <param name="scriptPath">Script file to dot-source.</param>
+    /// <param name="scriptBlockText">Inline script to invoke.</param>
+    /// <param name="callerScriptRoot">Value for <c>$PSScriptRoot</c> when invoking <paramref name="scriptBlockText"/>.</param>
+    /// <param name="host">
+    ///   Optional host to associate with the runspace. When <see langword="null"/> a new
+    ///   <see cref="McpPsHost"/> is created.
+    /// </param>
+    private static (Runspace Runspace, McpPsHost Host) CreateConfiguredRunspace(
+        string[]? modules,
+        string? scriptPath,
+        string? scriptBlockText,
+        string? callerScriptRoot,
+        McpPsHost? host = null)
     {
-        var host = new McpPsHost();
+        host ??= new McpPsHost();
         var runspace = RunspaceFactory.CreateRunspace(host);
         runspace.Open();
 
@@ -175,6 +214,26 @@ internal sealed partial class McpServerRunner
             InvokeScriptBlock(runspace, scriptBlockText, callerScriptRoot);
 
         return (runspace, host);
+    }
+
+    /// <summary>
+    /// Creates a <see cref="ManagedRunspacePool"/> of individually-initialized runspaces.
+    /// Each runspace is created via <see cref="CreateConfiguredRunspace"/> — the same code path
+    /// as the discovery runspace — so modules, dot-sourced scripts, and <c>$PSScriptRoot</c>
+    /// all work identically.
+    /// </summary>
+    private static ManagedRunspacePool CreateManagedRunspacePool(
+        McpPsHost host,
+        string[]? modules,
+        string? scriptPath,
+        string? scriptBlockText,
+        string? callerScriptRoot)
+    {
+        return new ManagedRunspacePool(MaxPoolSize, () =>
+        {
+            var (rs, _) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot, host);
+            return rs;
+        });
     }
 
     /// <summary>

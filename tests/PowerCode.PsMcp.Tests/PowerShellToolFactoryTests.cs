@@ -1350,7 +1350,7 @@ description);
 
         var variants = GetVariantsByDescription(tool.ProtocolTool.InputSchema);
         var byNameProperties = variants["Name (default)"].GetProperty("properties");
-        var byIdProperties = variants["Id"].GetProperty("properties");
+        var byIdProperties = variants["Id"].GetProperty("properties");  
 
         Assert.IsTrue(byNameProperties.TryGetProperty("Name", out _),
             "Expected 'Name' in Name parameter-set schema.");

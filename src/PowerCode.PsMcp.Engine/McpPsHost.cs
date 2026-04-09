@@ -28,11 +28,12 @@ internal sealed class McpPsHost : PSHost
     public override PSHostUserInterface UI => _ui;
 
     /// <summary>
-    /// Sets or clears the per-invocation MCP progress reporter wired into the host UI.
-    /// Must only be called while the runspace lock is held.
+    /// Sets or clears the per-invocation MCP progress reporter for the current async
+    /// context. Safe to call concurrently from multiple tool invocations on a
+    /// <see cref="System.Management.Automation.Runspaces.RunspacePool"/>.
     /// </summary>
-    internal void SetProgressReporter(IProgress<ProgressNotificationValue>? progress) =>
-        _ui.Progress = progress;
+    internal static void SetProgressReporter(IProgress<ProgressNotificationValue>? progress) =>
+        McpPsHostUserInterface.SetProgress(progress);
 
     /// <inheritdoc />
     public override CultureInfo CurrentCulture => CultureInfo.InvariantCulture;

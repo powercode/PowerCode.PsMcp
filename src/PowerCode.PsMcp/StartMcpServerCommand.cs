@@ -87,6 +87,14 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     [Parameter(HelpMessage = "Enable startup diagnostic logging for discovery and schema mapping")]
     public SwitchParameter DiagnosticLogging { get; set; }
 
+    /// <summary>
+    /// Disables parallel tool invocation. When specified, a single runspace protected by a
+    /// lock is used instead of a <see cref="System.Management.Automation.Runspaces.RunspacePool"/>.
+    /// Use this when tool commands depend on shared session state.
+    /// </summary>
+    [Parameter(HelpMessage = "Disable parallel tool invocation; use a single runspace with serialized access")]
+    public SwitchParameter NoParallel { get; set; }
+
     // ── Private state ────────────────────────────────────────────────────────
 
     private CancellationTokenSource? _cts;
@@ -114,7 +122,7 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
             var startupLogLevel = DiagnosticLogging.IsPresent ? LogLevel.Trace : LogLevel.Warning;
 
 #pragma warning disable CA2025 // GetResult() blocks synchronously by design for cmdlet execution.
-            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, startupLogLevel, _cts.Token)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, startupLogLevel, _cts.Token, NoParallel.IsPresent)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025

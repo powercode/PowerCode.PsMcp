@@ -35,14 +35,15 @@ internal sealed record HelpInfo(
 internal sealed partial class PowerShellToolFactory : IDisposable
 {
     private readonly Runspace _runspace;
+    private readonly ManagedRunspacePool? _runspacePool;
     private readonly int _jsonDepth;
     private readonly McpPsHost _host;
     private readonly ILoggerFactory _stderrLoggerFactory;
     private readonly ILogger _diagnosticLogger;
 
-    // A single semaphore serialises all runspace access across every tool produced
-    // by this factory, since PowerShell runspaces are single-threaded.
-    private readonly SemaphoreSlim _runspaceLock = new(1, 1);
+    // Serialises runspace access when running in single-runspace (NoParallel) mode.
+    // Null when a ManagedRunspacePool is used — the pool manages concurrency internally.
+    private readonly SemaphoreSlim? _runspaceLock;
 
     // Common PS parameters that are never exposed as MCP tool parameters.
     private static readonly HashSet<string> s_commonParameters = new(StringComparer.OrdinalIgnoreCase)
@@ -62,14 +63,15 @@ internal sealed partial class PowerShellToolFactory : IDisposable
     private static readonly string[] s_outputVariantRequiredProperties = ["ParameterSetName", "items"];
 
     /// <summary>
-    /// Initialises a new factory backed by <paramref name="runspace"/>.
+    /// Initialises a new factory backed by <paramref name="runspace"/> in single-runspace (serial) mode.
     /// </summary>
-    /// <param name="runspace">An already-opened runspace used for command discovery.</param>
+    /// <param name="runspace">An already-opened runspace used for command discovery and tool execution.</param>
     /// <param name="host">
     ///     The <see cref="McpPsHost"/> associated with <paramref name="runspace"/>.
     ///     When provided, tools will forward <see cref="System.Management.Automation.ProgressRecord"/>
     ///     events to the MCP client as progress notifications.
     /// </param>
+    /// <param name="stderrLoggerFactory">Logger factory for stderr diagnostics.</param>
     /// <param name="jsonDepth">
     ///     Depth passed to <c>ConvertTo-Json</c> when serialising tool output.
     ///     Defaults to 2.
@@ -79,6 +81,39 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         ArgumentNullException.ThrowIfNull(runspace);
         ArgumentNullException.ThrowIfNull(stderrLoggerFactory);
         _runspace = runspace;
+        _runspacePool = null;
+        _runspaceLock = new SemaphoreSlim(1, 1);
+        _jsonDepth = jsonDepth;
+        _host = host;
+        _stderrLoggerFactory = stderrLoggerFactory;
+        _diagnosticLogger = stderrLoggerFactory.CreateLogger<PowerShellToolFactory>();
+    }
+
+    /// <summary>
+    /// Initialises a new factory backed by a <paramref name="runspacePool"/> for parallel tool execution.
+    /// A single runspace from the pool is used for command discovery; all runspaces in the pool are
+    /// available for concurrent tool invocations.
+    /// </summary>
+    /// <param name="runspace">An already-opened runspace used for command discovery at build time.</param>
+    /// <param name="runspacePool">Pool of individually-initialized runspaces used for tool execution.</param>
+    /// <param name="host">
+    ///     The <see cref="McpPsHost"/> associated with the pool.
+    ///     Tools will forward <see cref="System.Management.Automation.ProgressRecord"/>
+    ///     events to the MCP client as progress notifications.
+    /// </param>
+    /// <param name="stderrLoggerFactory">Logger factory for stderr diagnostics.</param>
+    /// <param name="jsonDepth">
+    ///     Depth passed to <c>ConvertTo-Json</c> when serialising tool output.
+    ///     Defaults to 2.
+    /// </param>
+    public PowerShellToolFactory(Runspace runspace, ManagedRunspacePool runspacePool, McpPsHost host, ILoggerFactory stderrLoggerFactory, int jsonDepth = 2)
+    {
+        ArgumentNullException.ThrowIfNull(runspace);
+        ArgumentNullException.ThrowIfNull(runspacePool);
+        ArgumentNullException.ThrowIfNull(stderrLoggerFactory);
+        _runspace = runspace;
+        _runspacePool = runspacePool;
+        _runspaceLock = null; // Pool manages its own concurrency.
         _jsonDepth = jsonDepth;
         _host = host;
         _stderrLoggerFactory = stderrLoggerFactory;
@@ -134,16 +169,26 @@ internal sealed partial class PowerShellToolFactory : IDisposable
 #pragma warning restore CA1873
         }
 
-        return new PowerShellTool(
-            commandName,
-            protocolTool,
-            _runspace,
-            _runspaceLock,
-            toolDepth,
-            _host,
-            _stderrLoggerFactory.CreateLogger(commandName),
-            config?.Property,
-            config?.ExcludeProperty);
+        return _runspacePool is not null
+            ? new PowerShellTool(
+                commandName,
+                protocolTool,
+                _runspacePool,
+                toolDepth,
+                _host,
+                _stderrLoggerFactory.CreateLogger(commandName),
+                config?.Property,
+                config?.ExcludeProperty)
+            : new PowerShellTool(
+                commandName,
+                protocolTool,
+                _runspace,
+                _runspaceLock!,
+                toolDepth,
+                _host,
+                _stderrLoggerFactory.CreateLogger(commandName),
+                config?.Property,
+                config?.ExcludeProperty);
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
@@ -1210,7 +1255,7 @@ internal sealed partial class PowerShellToolFactory : IDisposable
         || type == typeof(System.Collections.Hashtable);
 
     /// <inheritdoc />
-    public void Dispose() => _runspaceLock.Dispose();
+    public void Dispose() => _runspaceLock?.Dispose();
 
     /// <summary>
     /// Maps a .NET <paramref name="type"/> to a JSON Schema type string and optional format.
