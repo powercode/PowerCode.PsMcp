@@ -20,7 +20,7 @@ Exposes PowerShell commands as MCP tools over JSON-RPC/stdio using automatic com
 ```
 Start-McpServer [[-Module] <string[]>] [-Include <string[]>] [-Exclude <string[]>]
  [-CommandConfiguration <hashtable>] [-ScriptPath <string>] [-ScriptBlock <scriptblock>] [-Depth <int>]
- [-DiagnosticLogging] [<CommonParameters>]
+ [-DiagnosticLogging] [-NoParallel] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -245,6 +245,33 @@ Aliases: []
 ParameterSets:
 - Name: (All)
   Position: 0
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -NoParallel
+
+Disables parallel tool invocation. By default, `Start-McpServer` creates a pool of up to 8
+individually-initialized runspaces so that multiple MCP tool calls can execute concurrently.
+When `-NoParallel` is specified, a single runspace protected by a lock is used instead,
+serializing all tool invocations.
+
+Use this switch when your tool commands depend on shared session state that is not safe for
+concurrent access.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: 'False'
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
