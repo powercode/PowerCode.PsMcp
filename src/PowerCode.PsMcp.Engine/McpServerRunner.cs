@@ -102,10 +102,6 @@ internal sealed partial class McpServerRunner
         var baseline = GetDefaultCommandNames();
         var (runspace, host) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
         using var _ = runspace;
-        if (startupLogLevel != LogLevel.Debug)
-        {
-            throw new InvalidOperationException("Debug");
-        }
         using var stderrLoggerFactory = McpLogging.CreateStderrLoggerFactory(startupLogLevel);
         var discoveryLogger = stderrLoggerFactory.CreateLogger<PowerShellToolFactory>();
         using var factory = new PowerShellToolFactory(runspace, host, stderrLoggerFactory, jsonDepth);

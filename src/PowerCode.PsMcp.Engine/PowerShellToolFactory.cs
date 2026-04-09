@@ -1046,11 +1046,10 @@ internal sealed partial class PowerShellToolFactory : IDisposable
             if (propType.IsArray)
             {
                 var elemType = propType.GetElementType() ?? typeof(string);
-                var (elt, _) = MapToJsonSchemaType(elemType);
                 propSchemas[prop.Name] = new Dictionary<string, object?>
                 {
                     ["type"] = "array",
-                    ["items"] = new Dictionary<string, object?> { ["type"] = elt }
+                    ["items"] = BuildItemSchema(elemType)
                 };
             }
             else

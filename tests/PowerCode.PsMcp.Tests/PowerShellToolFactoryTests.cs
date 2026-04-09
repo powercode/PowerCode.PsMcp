@@ -842,6 +842,46 @@ description);
     // ── Output schema ────────────────────────────────────────────────────────
 
     [TestMethod]
+    public void Create_WithNestedClassArrayOutputType_ReflectsNestedProperties()
+    {
+        using var ps = PowerShell.Create();
+        ps.Runspace = _runspace;
+        ps.AddScript("""
+                     class Selection {
+                         [string]$Urvalsgrupp
+                         [string]$Poang
+                         [string]$Antagna
+                     }
+                     class SearchResult {
+                         [string]$Skola
+                         [string]$Program
+                         [Selection[]]$Urval
+                     }
+                     function Get-SearchResult {
+                         [OutputType([SearchResult])]
+                         param()
+                     }
+                     """);
+        ps.Invoke();
+
+        var outputSchema = _factory.Create("Get-SearchResult").ProtocolTool.OutputSchema!.Value;
+        var itemProps = outputSchema
+            .GetProperty("properties")
+            .GetProperty("items")
+            .GetProperty("items")
+            .GetProperty("properties");
+
+        // Urval must be an array of objects with nested properties, not an array of strings.
+        var urval = itemProps.GetProperty("Urval");
+        Assert.AreEqual("array", urval.GetProperty("type").GetString());
+
+        var urvalItemProps = urval.GetProperty("items").GetProperty("properties");
+        Assert.AreEqual("string", urvalItemProps.GetProperty("Urvalsgrupp").GetProperty("type").GetString());
+        Assert.AreEqual("string", urvalItemProps.GetProperty("Poang").GetProperty("type").GetString());
+        Assert.AreEqual("string", urvalItemProps.GetProperty("Antagna").GetProperty("type").GetString());
+    }
+
+    [TestMethod]
     public void Create_WithNoOutputType_OutputSchemaIsNull()
     {
         DefineWeatherFunction();
