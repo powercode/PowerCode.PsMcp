@@ -289,7 +289,15 @@ internal sealed partial class McpServerRunner
         {
             McpToolConfig? config = null;
             commandConfig?.TryGetValue(cmdName, out config);
-            toolCollection.Add(factory.Create(cmdName, config));
+            try
+            {
+                var powerShellTool = factory.Create(cmdName, config);
+                toolCollection.Add(powerShellTool);
+            }
+            catch (Exception ex)
+            {
+                LogMessages.DiscoveryFailedForCommand(logger, cmdName, ex);
+            }
         }
 
         LogMessages.DiscoveryComplete(logger, toolCollection.Count);
@@ -299,13 +307,13 @@ internal sealed partial class McpServerRunner
 
     private static partial class LogMessages
     {
-        [LoggerMessage(EventId = 2000, Level = LogLevel.Information, Message = "Discovery baseline: {baselineCount} commands")]
+        [LoggerMessage(EventId = 2000, Level = LogLevel.Information, Message = "Discovery baseline: {BaselineCount} commands")]
         public static partial void DiscoveryBaseline(ILogger logger, int baselineCount);
 
-        [LoggerMessage(EventId = 2001, Level = LogLevel.Information, Message = "Discovery post-load: {allCount} commands ({deltaCount} new)")]
+        [LoggerMessage(EventId = 2001, Level = LogLevel.Information, Message = "Discovery post-load: {AllCount} commands ({DeltaCount} new)")]
         public static partial void DiscoveryPostLoad(ILogger logger, int allCount, int deltaCount);
 
-        [LoggerMessage(EventId = 2002, Level = LogLevel.Information, Message = "Discovery include patterns: {includePatterns}", SkipEnabledCheck = true)]
+        [LoggerMessage(EventId = 2002, Level = LogLevel.Information, Message = "Discovery include patterns: {IncludePatterns}", SkipEnabledCheck = true)]
         private static partial void DiscoveryIncludePatternsCore(ILogger logger, string includePatterns);
 
         public static void DiscoveryIncludePatterns(ILogger logger, string[]? includePatterns)
@@ -322,7 +330,7 @@ internal sealed partial class McpServerRunner
             }
         }
 
-        [LoggerMessage(EventId = 2003, Level = LogLevel.Information, Message = "Discovery exclude patterns: {excludePatterns}")]
+        [LoggerMessage(EventId = 2003, Level = LogLevel.Information, Message = "Discovery exclude patterns: {ExcludePatterns}")]
         private static partial void DiscoveryExcludePatternsCore(ILogger logger, string excludePatterns);
 
         public static void DiscoveryExcludePatterns(ILogger logger, string[]? excludePatterns)
@@ -339,8 +347,11 @@ internal sealed partial class McpServerRunner
             }
         }
 
-        [LoggerMessage(EventId = 2004, Level = LogLevel.Information, Message = "Discovery complete: {toolCount} tools registered")]
+        [LoggerMessage(EventId = 2004, Level = LogLevel.Information, Message = "Discovery complete: {ToolCount} tools registered")]
         public static partial void DiscoveryComplete(ILogger logger, int toolCount);
+        
+        [LoggerMessage(EventId = 2005, Level = LogLevel.Error, Message = "Discovery failed for command: {CommandName}. Tool not registered")]
+        public static partial void DiscoveryFailedForCommand(ILogger logger, string commandName, Exception exception);
     }
 
     private static void InvokeAndThrowOnError(Runspace runspace, Action<PowerShell> configure, string failureContext)

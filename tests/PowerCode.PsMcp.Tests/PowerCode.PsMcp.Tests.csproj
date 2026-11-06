@@ -8,6 +8,7 @@
     <NoWarn>$(NoWarn);CA1515</NoWarn>
     <!-- Pre-existing: StringComparison overloads and IDisposable patterns in test helpers. -->
     <NoWarn>$(NoWarn);CA1307;CA2000;CA2213</NoWarn>
+    <MSTestAnalysisMode>All</MSTestAnalysisMode>
   </PropertyGroup>
   <ItemGroup>
     <!--

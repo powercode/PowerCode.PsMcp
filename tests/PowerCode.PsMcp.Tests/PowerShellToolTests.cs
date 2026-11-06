@@ -84,7 +84,7 @@ public sealed class PowerShellToolTests : IDisposable
     {
         var tool = _factory.Create("Get-Date");
 
-        Assert.IsFalse(tool.Metadata.Any(), "Expected empty metadata collection.");
+        Assert.IsEmpty(tool.Metadata, "Expected empty metadata collection.");
     }
 
     // ── InvokeAsync ───────────────────────────────────────────────────────────

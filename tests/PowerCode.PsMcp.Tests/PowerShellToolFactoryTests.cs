@@ -3,6 +3,8 @@ using System.Management.Automation.Runspaces;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 
+[assembly: Parallelize(Scope = ExecutionScope.ClassLevel)]
+
 namespace PowerCode.PsMcp.Tests;
 
 /// <summary>
@@ -699,7 +701,7 @@ public sealed class PowerShellToolFactoryTests : IDisposable
 
         Assert.AreEqual(JsonValueKind.Array, typeArray.ValueKind);
         var types = typeArray.EnumerateArray().Select(element => element.GetString()).ToList();
-        CollectionAssert.AreEquivalent(s_stringAndNullTypes, types);
+        Assert.AreSequenceEqual(s_stringAndNullTypes, types, Microsoft.VisualStudio.TestTools.UnitTesting.SequenceOrder.InAnyOrder);
     }
 
     [TestMethod]
@@ -724,7 +726,7 @@ public sealed class PowerShellToolFactoryTests : IDisposable
 
         Assert.AreEqual(JsonValueKind.Array, typeArray.ValueKind);
         var types = typeArray.EnumerateArray().Select(element => element.GetString()).ToList();
-        CollectionAssert.AreEquivalent(s_arrayAndNullTypes, types);
+        Assert.AreSequenceEqual(s_arrayAndNullTypes, types, Microsoft.VisualStudio.TestTools.UnitTesting.SequenceOrder.InAnyOrder);
     }
 
     [TestMethod]
@@ -1219,9 +1221,9 @@ description);
             .EnumerateArray()
             .Select(element => element.GetString())
             .ToList();
-        
-        CollectionAssert.AreEquivalent(s_byNameRequired, byNameRequired);
-        CollectionAssert.AreEquivalent(s_byIdRequired, byIdRequired);
+
+        Assert.AreSequenceEqual(s_byNameRequired, byNameRequired, Microsoft.VisualStudio.TestTools.UnitTesting.SequenceOrder.InAnyOrder);
+        Assert.AreSequenceEqual(s_byIdRequired, byIdRequired, Microsoft.VisualStudio.TestTools.UnitTesting.SequenceOrder.InAnyOrder);
     }
 
     [TestMethod]
