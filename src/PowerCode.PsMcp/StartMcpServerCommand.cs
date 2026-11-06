@@ -82,7 +82,7 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
 
     /// <summary>
     /// Enables startup diagnostics for command discovery and schema mapping.
-    /// When enabled, startup logs are emitted at <see cref="LogLevel.Debug"/>.
+    /// When enabled, logs are emitted at <see cref="LogLevel.Trace"/>.
     /// </summary>
     [Parameter(HelpMessage = "Enable startup diagnostic logging for discovery and schema mapping")]
     public SwitchParameter DiagnosticLogging { get; set; }
@@ -94,6 +94,11 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
     /// </summary>
     [Parameter(HelpMessage = "Disable parallel tool invocation; use a single runspace with serialized access")]
     public SwitchParameter NoParallel { get; set; }
+
+    /// <summary>Optional diagnostic log file, resolved relative to the current PowerShell location.</summary>
+    [Parameter(HelpMessage = "Append diagnostics to a rotating log file as well as stderr")]
+    [ValidateNotNullOrWhiteSpace]
+    public string? LogPath { get; set; }
 
     // ── Private state ────────────────────────────────────────────────────────
 
@@ -119,10 +124,11 @@ public sealed class StartMcpServerCommand : PSCmdlet, IDisposable
 
             var callerScriptRoot = ResolveCallerScriptRoot();
 
+            var logPath = LogPath is null ? null : SessionState.Path.GetUnresolvedProviderPathFromPSPath(LogPath);
             var startupLogLevel = DiagnosticLogging.IsPresent ? LogLevel.Trace : LogLevel.Warning;
 
 #pragma warning disable CA2025 // GetResult() blocks synchronously by design for cmdlet execution.
-            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, startupLogLevel, _cts.Token, NoParallel.IsPresent)
+            runner.RunAsync(Module, ScriptPath, ScriptBlock?.ToString(), callerScriptRoot, Include, Exclude, configDict, Depth, startupLogLevel, _cts.Token, NoParallel.IsPresent, logPath)
                   .GetAwaiter()
                   .GetResult();
 #pragma warning restore CA2025

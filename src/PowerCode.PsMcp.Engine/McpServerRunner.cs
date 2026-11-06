@@ -54,7 +54,7 @@ internal sealed partial class McpServerRunner
     public async Task RunAsync(
         McpServerPrimitiveCollection<McpServerTool> toolCollection,
         CancellationToken cancellationToken,
-        LogLevel startupLogLevel = LogLevel.Debug)
+        LogLevel startupLogLevel = LogLevel.Debug, string? logPath = null)
     {
         ArgumentNullException.ThrowIfNull(toolCollection);
         cancellationToken.ThrowIfCancellationRequested();
@@ -70,13 +70,12 @@ internal sealed partial class McpServerRunner
             },
             Capabilities = new ServerCapabilities
             {
-                Tools = new ToolsCapability(),
-                Logging = new LoggingCapability()
+                Tools = new ToolsCapability()
             },
             ToolCollection = toolCollection
         };
 
-        using var stderrLoggerFactory = McpLogging.CreateStderrLoggerFactory(startupLogLevel);
+        using var stderrLoggerFactory = McpLogging.CreateLoggerFactory(startupLogLevel, logPath);
         await RunAsyncCore(transport, options, stderrLoggerFactory, cancellationToken).ConfigureAwait(false);
     }
 
@@ -108,12 +107,12 @@ internal sealed partial class McpServerRunner
         int jsonDepth,
         LogLevel startupLogLevel,
         CancellationToken cancellationToken,
-        bool noParallel = false)
+        bool noParallel = false, string? logPath = null)
     {
+        using var stderrLoggerFactory = McpLogging.CreateLoggerFactory(startupLogLevel, logPath);
         var baseline = GetDefaultCommandNames();
         var (runspace, host) = CreateConfiguredRunspace(modules, scriptPath, scriptBlockText, callerScriptRoot);
         using var _ = runspace;
-        using var stderrLoggerFactory = McpLogging.CreateStderrLoggerFactory(startupLogLevel);
         var discoveryLogger = stderrLoggerFactory.CreateLogger<PowerShellToolFactory>();
 
         ManagedRunspacePool? pool = null;
@@ -153,8 +152,7 @@ internal sealed partial class McpServerRunner
             },
             Capabilities = new ServerCapabilities
             {
-                Tools = new ToolsCapability(),
-                Logging = new LoggingCapability()
+                Tools = new ToolsCapability()
             },
             ToolCollection = toolCollection
         };

@@ -92,7 +92,28 @@ schema to specific parameter sets, and override the JSON depth for that command 
 Start-McpServer -Module MyModule -DiagnosticLogging
 ```
 
-Enables verbose startup diagnostics for discovery and schema mapping (emitted to stderr logs).
+Enables Trace-level diagnostics, including discovery, schema mapping, and tool execution.
+Without this switch, diagnostic logging includes Warning and higher levels. Logs go to stderr,
+keeping stdout reserved for MCP JSON-RPC.
+
+### Save diagnostics to a file
+
+```powershell
+Start-McpServer -Module MyModule -LogPath ./psmcp.log -DiagnosticLogging
+```
+
+`-LogPath` additionally appends UTF-8 diagnostics to a file, resolving relative paths from the
+current PowerShell location. The parent directory must already exist. Each record includes a UTC
+timestamp, severity, category, event ID, message, and any exception details. Writes from parallel
+tool calls are serialized and flushed immediately. Use a separate file for each server process.
+
+The file rotates before a write would exceed 10 MiB, retaining five backups (`psmcp.log.1` through
+`psmcp.log.5`, newest first). A single oversized record is kept intact. An unwritable file fails
+startup; a later I/O failure disables file logging and reports the failure on stderr.
+
+Deprecated MCP `notifications/message` logging is no longer emitted. PowerShell stream messages
+remain in final tool results, and progress notifications remain supported. Direct PowerShell host
+output still goes to stderr; the file captures records routed through the diagnostic logger.
 
 ### Force serialized tool execution
 

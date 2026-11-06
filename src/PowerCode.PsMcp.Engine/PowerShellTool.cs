@@ -29,7 +29,7 @@ namespace PowerCode.PsMcp;
 /// <see cref="System.Management.Automation.PSDataCollection{T}.DataAdded"/> event as each
 /// object arrives — without waiting for the command to finish. This means diagnostic
 /// records (errors, warnings, verbose lines, etc.) are written to stderr and also forwarded
-/// to the MCP client as <c>notifications/message</c> log entries in real time during long-running commands.
+/// to local diagnostic logs in real time during long-running commands.
 /// True output objects are forwarded into a serializer input collection for later processing.
 /// </para>
 /// <para>
@@ -246,8 +246,7 @@ internal sealed partial class PowerShellTool : McpServerTool
         Runspace runspace,
         CancellationToken cancellationToken)
     {
-        using var toolLoggerScope = McpLogging.CreateToolLoggerScope(request, _stderrLogger, _commandName);
-        var logger = toolLoggerScope.Logger;
+        var logger = _stderrLogger;
 
         using var serializerInput = new PSDataCollection<PSObject>();
         var classifier = new PipelineClassifier(serializerInput, logger);
